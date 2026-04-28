@@ -5,8 +5,10 @@ description = "NAVIN Indoor Parking Navigation System - Backend"
 authors = [
     {name = "NAVIN Team"}
 ]
-readme = "README.md"
 requires-python = ">=3.11,<3.13"
+
+[tool.poetry]
+package-mode = false
 dependencies = [
     "fastapi (==0.111.0)",
     "uvicorn[standard] (==0.29.0)",
