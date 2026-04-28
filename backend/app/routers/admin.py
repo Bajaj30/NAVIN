@@ -17,6 +17,40 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 router = APIRouter()
 
 
+@router.post("/seed")
+def seed_demo_data(db: Session = Depends(get_db)):
+    """Seed demo structure + bays (idempotent)."""
+    from app.models.structure import Structure, Bay
+
+    existing = db.query(Structure).filter(Structure.id == "struct_demo_001").first()
+    if existing:
+        bay_count = db.query(func.count(Bay.id)).filter(Bay.structure_id == "struct_demo_001").scalar()
+        return {"seeded": False, "message": "Already exists", "bays": bay_count}
+
+    s = Structure(
+        id="struct_demo_001",
+        name="NAVIN Demo Parking",
+        address="Demo Campus, Block A",
+        total_bays=20,
+        floor_count=2,
+    )
+    db.add(s)
+    db.flush()
+
+    zones = "ABCDEFGHIJ"
+    for floor in range(2):
+        for i, z in enumerate(zones):
+            db.add(Bay(
+                structure_id=s.id,
+                bay_number=f"{z}{floor+1}",
+                floor=floor,
+                bay_type="ev" if i < 2 else "regular",
+            ))
+    db.commit()
+    logger.info("Demo data seeded: 20 bays across 2 floors")
+    return {"seeded": True, "message": "Created struct_demo_001 with 20 bays"}
+
+
 @router.post("/floorplan")
 async def upload_floorplan(
     file: UploadFile = File(...),
