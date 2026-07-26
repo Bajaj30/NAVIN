@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>NAVIN Data Collector</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e4e6ed;
+    --text-dim: #8b8fa3;
+    --walking: #3b82f6;
+    --stairs: #f59e0b;
+    --stationary: #ef4444;
+    --green: #22c55e;
+    --accent: #818cf8;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 12px;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow-y: auto;
+  }
+
+  /* Header */
+  .header {
+    text-align: center;
+    padding: 12px 0 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .header h1 span { color: var(--accent); }
+  .session-status {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .session-status.recording {
+    color: var(--stationary);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Current Label */
+  .current-label {
+    text-align: center;
+    padding: 12px;
+    background: var(--surface);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+  }
+  .current-label .prefix {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .current-label .label-name {
+    font-size: 28px;
+    font-weight: 800;
+    margin-top: 4px;
+    transition: color 0.2s;
+  }
+
+  /* Label Buttons */
+  .label-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .label-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 8px;
+    border-radius: 12px;
+    border: 2px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-height: 72px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .label-btn .emoji { font-size: 24px; margin-bottom: 4px; }
+  .label-btn.active { transform: scale(0.97); }
+  .label-btn[data-label="WALKING"].active {
+    border-color: var(--walking);
+    background: rgba(59,130,246,0.15);
+    box-shadow: 0 0 20px rgba(59,130,246,0.2);
+  }
+  .label-btn[data-label="STAIRS"].active {
+    border-color: var(--stairs);
+    background: rgba(245,158,11,0.15);
+    box-shadow: 0 0 20px rgba(245,158,11,0.2);
+  }
+  .label-btn[data-label="STATIONARY"].active {
+    border-color: var(--stationary);
+    background: rgba(239,68,68,0.15);
+    box-shadow: 0 0 20px rgba(239,68,68,0.2);
+  }
+  .label-btn.full-width {
+    grid-column: 1 / -1;
+  }
+
+  /* Stats Panel */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .panel-title {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+  }
+  .stat .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat.full { grid-column: 1 / -1; }
+
+  /* Sensor Readout */
+  .sensor-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12.5px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .sensor-row:last-child { border-bottom: none; }
+  .sensor-row .lbl { color: var(--text-dim); min-width: 42px; }
+  .sensor-row .vals { font-variant-numeric: tabular-nums; }
+
+  /* Control Buttons */
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .ctrl-btn {
+    padding: 14px;
+    border-radius: 12px;
+    border: none;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ctrl-btn:active { transform: scale(0.96); }
+  #btnStart {
+    background: var(--green);
+    color: #000;
+  }
+  #btnStart.recording {
+    background: var(--stationary);
+    color: #fff;
+  }
+  #btnDownload {
+    background: var(--accent);
+    color: #fff;
+  }
+  #btnClear {
+    background: var(--surface);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  #btnUpload {
+    background: var(--surface);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+
+  /* iOS Permission Banner */
+  .ios-banner {
+    display: none;
+    background: var(--stairs);
+    color: #000;
+    padding: 16px;
+    border-radius: 12px;
+    text-align: center;
+    margin-bottom: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 15px;
+  }
+
+  /* Alert Banner */
+  .alert-banner {
+    display: none;
+    padding: 10px 14px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    text-align: center;
+  }
+  .alert-banner.warning {
+    display: block;
+    background: rgba(245,158,11,0.15);
+    color: var(--stairs);
+    border: 1px solid rgba(245,158,11,0.3);
+  }
+  .alert-banner.error {
+    display: block;
+    background: rgba(239,68,68,0.15);
+    color: var(--stationary);
+    border: 1px solid rgba(239,68,68,0.3);
+  }
+  .alert-banner.info {
+    display: block;
+    background: rgba(59,130,246,0.15);
+    color: var(--walking);
+    border: 1px solid rgba(59,130,246,0.3);
+  }
+</style>
+</head>
+<body>
+
+<!-- iOS Permission Banner -->
+<div class="ios-banner" id="iosBanner" onclick="requestIOSPermission()">
+  &#x1F4F1; Tap here to enable sensor access (iOS required)
+</div>
+
+<!-- Alert Banner -->
+<div class="alert-banner" id="alertBanner"></div>
+
+<!-- Header -->
+<div class="header">
+  <h1>&#x1F52C; NAVIN <span>Data Collector</span></h1>
+  <div class="session-status" id="sessionStatus">Ready to collect</div>
+</div>
+
+<!-- Current Label -->
+<div class="current-label">
+  <div class="prefix">Current Label</div>
+  <div class="label-name" id="currentLabelDisplay" style="color: var(--walking);">WALKING</div>
+</div>
+
+<!-- Label Buttons -->
+<div class="label-buttons">
+  <button class="label-btn active" data-label="WALKING" onclick="setLabel('WALKING')">
+    <span class="emoji">&#x1F6B6;</span> WALKING
+  </button>
+  <button class="label-btn" data-label="STAIRS" onclick="setLabel('STAIRS')">
+    <span class="emoji">&#x1FA9C;</span> STAIRS
+  </button>
+  <button class="label-btn full-width" data-label="STATIONARY" onclick="setLabel('STATIONARY')">
+    <span class="emoji">&#x1F6D1;</span> STATIONARY
+  </button>
+</div>
+
+<!-- Stats -->
+<div class="panel">
+  <div class="panel-title">Collection Stats</div>
+  <div class="stats-grid">
+    <div class="stat"><span>Total Samples</span><span class="val" id="totalCount">0</span></div>
+    <div class="stat"><span>Duration</span><span class="val" id="duration">00:00</span></div>
+    <div class="stat"><span style="color:var(--walking)">Walking</span><span class="val" id="walkCount">0</span></div>
+    <div class="stat"><span style="color:var(--stairs)">Stairs</span><span class="val" id="stairCount">0</span></div>
+    <div class="stat"><span style="color:var(--stationary)">Stationary</span><span class="val" id="statCount">0</span></div>
+    <div class="stat"><span>Rate</span><span class="val" id="sampleRate">-- Hz</span></div>
+  </div>
+</div>
+
+<!-- Sensor Readout -->
+<div class="panel">
+  <div class="panel-title">Live Sensor Data</div>
+  <div class="sensor-row">
+    <span class="lbl">Accel</span>
+    <span class="vals" id="accelVals">--, --, --</span>
+  </div>
+  <div class="sensor-row">
+    <span class="lbl">Gyro</span>
+    <span class="vals" id="gyroVals">--, --, --</span>
+  </div>
+  <div class="sensor-row">
+    <span class="lbl">Mag</span>
+    <span class="vals" id="magVals">--, --, --</span>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <button class="ctrl-btn" id="btnStart" onclick="toggleRecording()">&#x25B6; START</button>
+  <button class="ctrl-btn" id="btnDownload" onclick="downloadCSV()">&#x1F4E5; Download CSV</button>
+  <button class="ctrl-btn" id="btnClear" onclick="clearData()">&#x1F5D1; Clear Data</button>
+  <button class="ctrl-btn" id="btnUpload" onclick="uploadData()">&#x2601; Upload</button>
+</div>
+
+<script>
+// ============================================================================
+// STATE
+// ============================================================================
+let currentLabel = 'WALKING';
+let isRecording = false;
+let samples = [];  // Array of arrays: [timestamp, ax, ay, az, gx, gy, gz, mx, my, mz, label]
+let recordingStartTime = null;
+let durationInterval = null;
+
+// Live sensor values (always updated, even when not recording)
+let accel = { x: 0, y: 0, z: 0 };
+let gyro  = { x: 0, y: 0, z: 0 };
+let mag   = { x: 0, y: 0, z: 0 };
+let magAvailable = false;
+
+// Sampling rate tracking
+let sampleTimestamps = [];
+const SAMPLE_INTERVAL = 100; // 10 Hz
+let lastSampleTime = 0;
+
+// Counters
+let counts = { WALKING: 0, STAIRS: 0, STATIONARY: 0 };
+
+// Global reference for emergency console access
+window.__navinData = samples;
+
+// ============================================================================
+// SENSOR SETUP
+// ============================================================================
+function initSensors() {
+  // Check if we need iOS permission
+  if (typeof DeviceMotionEvent !== 'undefined' &&
+      typeof DeviceMotionEvent.requestPermission === 'function') {
+    // iOS 13+ — need user gesture to request permission
+    document.getElementById('iosBanner').style.display = 'block';
+    return;
+  }
+
+  // Android / desktop — just start listening
+  startSensorListeners();
+}
+
+function requestIOSPermission() {
+  Promise.all([
+    DeviceMotionEvent.requestPermission(),
+    DeviceOrientationEvent.requestPermission()
+  ]).then(([motionPerm, orientPerm]) => {
+    if (motionPerm === 'granted' && orientPerm === 'granted') {
+      document.getElementById('iosBanner').style.display = 'none';
+      startSensorListeners();
+    } else {
+      showAlert('Sensor permission denied. Please allow in Settings.', 'error');
+    }
+  }).catch(err => {
+    showAlert('Permission error: ' + err.message, 'error');
+  });
+}
+
+function startSensorListeners() {
+  // DeviceMotionEvent — accelerometer + gyroscope
+  window.addEventListener('devicemotion', (e) => {
+    // accelerationIncludingGravity (always available, even without gyro fusion)
+    const a = e.accelerationIncludingGravity;
+    if (a) {
+      accel.x = a.x || 0;
+      accel.y = a.y || 0;
+      accel.z = a.z || 0;
+    }
+
+    // rotationRate — gyroscope
+    const r = e.rotationRate;
+    if (r) {
+      gyro.x = r.alpha || 0;  // yaw
+      gyro.y = r.beta  || 0;  // pitch
+      gyro.z = r.gamma || 0;  // roll
+    }
+  }, { frequency: 10 });
+
+  // DeviceOrientationEvent — magnetometer / compass
+  window.addEventListener('deviceorientation', (e) => {
+    if (e.alpha !== null) {
+      magAvailable = true;
+      mag.x = e.alpha || 0;  // compass heading 0-360
+      mag.y = e.beta  || 0;  // pitch -180 to 180
+      mag.z = e.gamma || 0;  // roll -90 to 90
+    }
+  }, { frequency: 10 });
+
+  // Start the sampling loop
+  setInterval(sampleTick, SAMPLE_INTERVAL);
+
+  // Start live display update (slightly slower to save CPU)
+  setInterval(updateDisplay, 200);
+
+  showAlert('Sensors active. Move phone to verify readout below.', 'info');
+  setTimeout(() => hideAlert(), 3000);
+}
+
+// ============================================================================
+// SAMPLING
+// ============================================================================
+function sampleTick() {
+  const now = Date.now();
+
+  // Update live display values (always)
+  updateSensorDisplay();
+
+  // Only store if recording
+  if (!isRecording) return;
+
+  // Throttle to ~10 Hz
+  if (now - lastSampleTime < SAMPLE_INTERVAL * 0.8) return;
+  lastSampleTime = now;
+
+  // Store sample
+  const row = [
+    now,
+    round(accel.x), round(accel.y), round(accel.z),
+    round(gyro.x),  round(gyro.y),  round(gyro.z),
+    round(mag.x),   round(mag.y),   round(mag.z),
+    currentLabel
+  ];
+  samples.push(row);
+
+  // Update counters
+  counts[currentLabel]++;
+
+  // Track sample rate
+  sampleTimestamps.push(now);
+  if (sampleTimestamps.length > 50) sampleTimestamps.shift();
+
+  // Warn at 50k samples
+  if (samples.length === 50000) {
+    showAlert('50,000 samples reached. Consider downloading and clearing.', 'warning');
+  }
+}
+
+function round(v) {
+  return Math.round(v * 100) / 100;
+}
+
+// ============================================================================
+// UI UPDATES
+// ============================================================================
+function updateSensorDisplay() {
+  document.getElementById('accelVals').textContent =
+    `${round(accel.x)}, ${round(accel.y)}, ${round(accel.z)}`;
+  document.getElementById('gyroVals').textContent =
+    `${round(gyro.x)}, ${round(gyro.y)}, ${round(gyro.z)}`;
+  document.getElementById('magVals').textContent =
+    magAvailable
+      ? `${round(mag.x)}, ${round(mag.y)}, ${round(mag.z)}`
+      : 'N/A (no magnetometer)';
+}
+
+function updateDisplay() {
+  document.getElementById('totalCount').textContent = samples.length.toLocaleString();
+  document.getElementById('walkCount').textContent = counts.WALKING.toLocaleString();
+  document.getElementById('stairCount').textContent = counts.STAIRS.toLocaleString();
+  document.getElementById('statCount').textContent = counts.STATIONARY.toLocaleString();
+
+  // Sample rate
+  if (sampleTimestamps.length >= 2) {
+    const span = sampleTimestamps[sampleTimestamps.length - 1] - sampleTimestamps[0];
+    const rate = ((sampleTimestamps.length - 1) / span * 1000).toFixed(1);
+    document.getElementById('sampleRate').textContent = rate + ' Hz';
+  }
+}
+
+function updateDuration() {
+  if (!recordingStartTime) return;
+  const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+  const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+  const secs = String(elapsed % 60).padStart(2, '0');
+  document.getElementById('duration').textContent = `${mins}:${secs}`;
+}
+
+// ============================================================================
+// LABEL SELECTION
+// ============================================================================
+function setLabel(label) {
+  currentLabel = label;
+  const display = document.getElementById('currentLabelDisplay');
+  display.textContent = label;
+
+  const colors = { WALKING: 'var(--walking)', STAIRS: 'var(--stairs)', STATIONARY: 'var(--stationary)' };
+  display.style.color = colors[label];
+
+  // Update button states
+  document.querySelectorAll('.label-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.label === label);
+  });
+
+  // Haptic feedback if available
+  if (navigator.vibrate) navigator.vibrate(30);
+}
+
+// ============================================================================
+// RECORDING CONTROLS
+// ============================================================================
+function toggleRecording() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
+
+function startRecording() {
+  isRecording = true;
+  if (!recordingStartTime) recordingStartTime = Date.now();
+
+  const btn = document.getElementById('btnStart');
+  btn.textContent = '\u23F9 STOP';
+  btn.classList.add('recording');
+
+  const status = document.getElementById('sessionStatus');
+  status.textContent = '\u{1F534} Recording...';
+  status.classList.add('recording');
+
+  durationInterval = setInterval(updateDuration, 1000);
+
+  if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+}
+
+function stopRecording() {
+  isRecording = false;
+
+  const btn = document.getElementById('btnStart');
+  btn.textContent = '\u25B6 START';
+  btn.classList.remove('recording');
+
+  const status = document.getElementById('sessionStatus');
+  status.textContent = `Paused \u2014 ${samples.length.toLocaleString()} samples collected`;
+  status.classList.remove('recording');
+
+  clearInterval(durationInterval);
+}
+
+// ============================================================================
+// DATA EXPORT
+// ============================================================================
+function downloadCSV() {
+  if (samples.length === 0) {
+    showAlert('No data to download. Start recording first.', 'warning');
+    return;
+  }
+
+  const header = 'timestamp,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,mag_x,mag_y,mag_z,label\n';
+  const rows = samples.map(r => r.join(',')).join('\n');
+  const csv = header + rows;
+
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+
+  // Filename with timestamp
+  const now = new Date();
+  const ts = now.toISOString().slice(0, 19).replace(/[T:]/g, '_');
+  a.download = `navin_session_${ts}.csv`;
+  a.href = url;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showAlert(`Downloaded ${samples.length.toLocaleString()} samples.`, 'info');
+  setTimeout(() => hideAlert(), 3000);
+
+  if (navigator.vibrate) navigator.vibrate(100);
+}
+
+function clearData() {
+  if (samples.length === 0) return;
+  if (!confirm(`Delete all ${samples.length.toLocaleString()} samples? This cannot be undone.`)) return;
+
+  samples.length = 0;
+  window.__navinData = samples;
+  counts = { WALKING: 0, STAIRS: 0, STATIONARY: 0 };
+  sampleTimestamps = [];
+  recordingStartTime = null;
+  lastSampleTime = 0;
+
+  document.getElementById('totalCount').textContent = '0';
+  document.getElementById('walkCount').textContent = '0';
+  document.getElementById('stairCount').textContent = '0';
+  document.getElementById('statCount').textContent = '0';
+  document.getElementById('duration').textContent = '00:00';
+  document.getElementById('sampleRate').textContent = '-- Hz';
+  document.getElementById('sessionStatus').textContent = 'Ready to collect';
+
+  showAlert('All data cleared.', 'info');
+  setTimeout(() => hideAlert(), 2000);
+}
+
+function uploadData() {
+  if (samples.length === 0) {
+    showAlert('No data to upload.', 'warning');
+    return;
+  }
+
+  // Upload to NAVIN backend (if available)
+  const header = 'timestamp,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,mag_x,mag_y,mag_z,label\n';
+  const rows = samples.map(r => r.join(',')).join('\n');
+  const csv = header + rows;
+
+  const API_URL = 'https://navin.onrender.com/api/admin/training-data';
+
+  showAlert('Uploading...', 'info');
+
+  fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/csv' },
+    body: csv
+  }).then(res => {
+    if (res.ok) {
+      showAlert('Upload successful!', 'info');
+    } else {
+      showAlert(`Upload failed: ${res.status}. Use Download instead.`, 'error');
+    }
+    setTimeout(() => hideAlert(), 4000);
+  }).catch(err => {
+    showAlert('Upload failed: server not reachable. Use Download instead.', 'error');
+    setTimeout(() => hideAlert(), 4000);
+  });
+}
+
+// ============================================================================
+// ALERT SYSTEM
+// ============================================================================
+function showAlert(msg, type) {
+  const el = document.getElementById('alertBanner');
+  el.textContent = msg;
+  el.className = 'alert-banner ' + type;
+}
+function hideAlert() {
+  document.getElementById('alertBanner').className = 'alert-banner';
+  document.getElementById('alertBanner').style.display = 'none';
+}
+
+// ============================================================================
+// VISIBILITY CHANGE (screen sleep detection)
+// ============================================================================
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && isRecording) {
+    stopRecording();
+    showAlert('Recording paused \u2014 screen went to sleep. Tap START to resume.', 'warning');
+  }
+});
+
+// Prevent accidental page close with unsaved data
+window.addEventListener('beforeunload', (e) => {
+  if (samples.length > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+// ============================================================================
+// INIT
+// ============================================================================
+window.addEventListener('DOMContentLoaded', initSensors);
+</script>
+</body>
+</html>
