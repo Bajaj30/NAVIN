@@ -1,0 +1,23 @@
+{
+  "window_size": 20,
+  "stride": 10,
+  "num_channels": 9,
+  "label_map": {
+    "STAIRS": 0,
+    "STATIONARY": 1,
+    "WALKING": 2
+  },
+  "split_method": "stratified_random",
+  "random_seed": 42,
+  "splits": {
+    "train": {
+      "windows": 652
+    },
+    "val": {
+      "windows": 140
+    },
+    "test": {
+      "windows": 140
+    }
+  }
+}
