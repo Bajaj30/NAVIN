@@ -1,12 +1,35 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getAdminSessions, getAdminLogs, getAdminStats, uploadFloorPlan, getFloorPlanUrl, getFloorPlanMeta } from '../services/api'
 import QRCodeDisplay from '../components/QRCodeDisplay'
+import MLModelPanel from '../components/MLModelPanel'
+import PSOSimulator from '../components/PSOSimulator'
+
+const ACTIVITY_STYLE = {
+  WALKING: { icon: '🚶', text: 'text-navin-400' },
+  STAIRS: { icon: '🪜', text: 'text-purple-400' },
+  STATIONARY: { icon: '⏸️', text: 'text-amber-400' },
+}
+
+// Latest CNN prediction for a session; dimmed when the phone stopped streaming
+function ActivityCell({ session }) {
+  const a = session.activity
+  if (!a || session.status === 'exited') return <span className="text-white/20">—</span>
+  const ageS = (Date.now() - new Date(a.updated_at + 'Z').getTime()) / 1000
+  const style = ACTIVITY_STYLE[a.activity] || {}
+  return (
+    <span className={`whitespace-nowrap ${ageS > 10 ? 'opacity-40' : ''}`} title={ageS > 10 ? `Last seen ${Math.round(ageS)} s ago` : 'Live'}>
+      {style.icon} <span className={`text-xs font-bold ${style.text}`}>{a.activity}</span>
+      <span className="text-[10px] text-white/40 ml-1">{Math.round(a.confidence * 100)}%</span>
+    </span>
+  )
+}
 
 export default function AdminDashboard() {
   const [sessions, setSessions] = useState([])
   const [logs, setLogs] = useState([])
   const [stats, setStats] = useState({})
-  const [tab, setTab] = useState('sessions')
+  // ?tab=ml / ?tab=pso deep-links straight to a tab (handy for demos)
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get('tab') || 'sessions')
   const [mapUploading, setMapUploading] = useState(false)
   const [mapMsg, setMapMsg] = useState(null)
   const [floorPlanExists, setFloorPlanExists] = useState(false)
@@ -26,7 +49,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     refreshAll()
-    const interval = setInterval(refreshAll, 15000)
+    const interval = setInterval(refreshAll, 5000)
     return () => clearInterval(interval)
   }, [refreshAll])
 
@@ -92,7 +115,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          {['sessions', 'logs', 'qr', 'map'].map(t => (
+          {['sessions', 'logs', 'qr', 'map', 'ml', 'pso'].map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -100,7 +123,7 @@ export default function AdminDashboard() {
                 tab === t ? 'bg-navin-600 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'
               }`}
             >
-              {t === 'sessions' ? '📋 Sessions' : t === 'logs' ? '📜 Logs' : t === 'qr' ? '📱 QR Codes' : '🗺️ Map'}
+              {{ sessions: '📋 Sessions', logs: '📜 Logs', qr: '📱 QR Codes', map: '🗺️ Map', ml: '🤖 ML Model', pso: '🛰️ Positioning' }[t]}
             </button>
           ))}
         </div>
@@ -114,6 +137,7 @@ export default function AdminDashboard() {
                   <th className="text-left p-2">ID</th>
                   <th className="text-left p-2">Status</th>
                   <th className="text-left p-2">Zone</th>
+                  <th className="text-left p-2">Activity (CNN)</th>
                   <th className="text-left p-2">Entry</th>
                   <th className="text-left p-2">Duration</th>
                 </tr>
@@ -124,12 +148,13 @@ export default function AdminDashboard() {
                     <td className="p-2 font-mono text-xs text-white/60">{s.id.substring(0, 8)}…</td>
                     <td className="p-2">{statusBadge(s.status)}</td>
                     <td className="p-2 text-white/60">{s.assigned_zone || '—'}</td>
-                    <td className="p-2 text-white/40 text-xs">{new Date(s.entry_time).toLocaleTimeString()}</td>
+                    <td className="p-2"><ActivityCell session={s} /></td>
+                    <td className="p-2 text-white/40 text-xs">{new Date(s.entry_time.endsWith('Z') ? s.entry_time : s.entry_time + 'Z').toLocaleTimeString()}</td>
                     <td className="p-2 text-white/60">{s.duration_mins != null ? `${s.duration_mins}m` : '—'}</td>
                   </tr>
                 ))}
                 {sessions.length === 0 && (
-                  <tr><td colSpan="5" className="p-6 text-center text-white/30">No sessions yet</td></tr>
+                  <tr><td colSpan="6" className="p-6 text-center text-white/30">No sessions yet</td></tr>
                 )}
               </tbody>
             </table>
@@ -166,6 +191,8 @@ export default function AdminDashboard() {
             </div>
           </div>
         )}
+        {tab === 'ml' && <MLModelPanel />}
+        {tab === 'pso' && <PSOSimulator />}
         {tab === 'map' && (
           <div className="glass-card p-6 animate-fade-in">
             <h3 className="text-lg font-bold text-white mb-4">🗺️ Floor Plan Management</h3>

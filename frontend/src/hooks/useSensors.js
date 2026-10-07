@@ -36,6 +36,8 @@ export default function useSensors(sessionId, enabled = true) {
   const lastStepTimeRef = useRef(0)
   const lastUpdateRef = useRef(0)
   const headingRef = useRef(0)
+  // Latest raw motion reading (unthrottled) — sampled at 10 Hz by useMLClassifier
+  const latestRef = useRef(null)
 
   // Debounced step detection — minimum 300ms between steps
   const detectStep = useCallback((mag) => {
@@ -60,6 +62,7 @@ export default function useSensors(sessionId, enabled = true) {
     const gyro_gamma = r.gamma ?? 0  // roll  (tilting)
 
     detectStep(accel_mag)
+    latestRef.current = { accel_x, accel_y, accel_z, gyro_alpha, gyro_beta, gyro_gamma, t: Date.now() }
 
     // Collect for batch (full speed)
     batchRef.current.push({
@@ -156,5 +159,5 @@ export default function useSensors(sessionId, enabled = true) {
     }
   }, [])
 
-  return { sensors, granted, requestPermission, error }
+  return { sensors, granted, requestPermission, error, latestRef }
 }

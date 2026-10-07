@@ -253,7 +253,7 @@
 
 <!-- iOS Permission Banner -->
 <div class="ios-banner" id="iosBanner" onclick="requestIOSPermission()">
-  &#x1F4F1; Tap here to enable sensor access (iOS required)
+  &#x1F4F1; Tap here to enable motion sensors
 </div>
 
 <!-- Alert Banner -->
@@ -356,7 +356,7 @@ function initSensors() {
   // Check if we need iOS permission
   if (typeof DeviceMotionEvent !== 'undefined' &&
       typeof DeviceMotionEvent.requestPermission === 'function') {
-    // iOS 13+ — need user gesture to request permission
+    // iOS 13+ and recent Chrome — need a user gesture to request permission
     document.getElementById('iosBanner').style.display = 'block';
     return;
   }
@@ -629,9 +629,11 @@ function uploadData() {
   const rows = samples.map(r => r.join(',')).join('\n');
   const csv = header + rows;
 
-  const API_URL = 'https://navin.onrender.com/api/admin/training-data';
+  // Same-origin path: Vercel rewrites /api/* to the Render backend (Vite proxies it in dev)
+  const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '_');
+  const API_URL = '/api/admin/training-data?filename=' + encodeURIComponent(`navin_session_${ts}.csv`);
 
-  showAlert('Uploading...', 'info');
+  showAlert('Uploading... (first request can take ~1 min while the free server wakes up)', 'info');
 
   fetch(API_URL, {
     method: 'POST',
@@ -639,7 +641,7 @@ function uploadData() {
     body: csv
   }).then(res => {
     if (res.ok) {
-      showAlert('Upload successful!', 'info');
+      res.json().then(d => showAlert(`Uploaded ${d.rows.toLocaleString()} samples \u2014 visible in Admin \u2192 ML Model.`, 'info'));
     } else {
       showAlert(`Upload failed: ${res.status}. Use Download instead.`, 'error');
     }

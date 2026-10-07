@@ -10,7 +10,6 @@ import { getFloorPlanMeta, getFloorPlanUrl } from '../services/api'
  */
 export default function FloorMap({ bays = [], sensors = {}, structureId = 'struct_demo_001', floor = 0 }) {
   const canvasRef = useRef(null)
-  const [floorPlan, setFloorPlan] = useState(null)
   const [floorPlanImg, setFloorPlanImg] = useState(null)
   const posRef = useRef({ x: 250, y: 350 })  // start near bottom center
   const lastStepsRef = useRef(0)
@@ -20,7 +19,6 @@ export default function FloorMap({ bays = [], sensors = {}, structureId = 'struc
     getFloorPlanMeta(structureId, floor)
       .then(res => {
         if (res.data.exists) {
-          setFloorPlan(res.data)
           const img = new Image()
           img.crossOrigin = 'anonymous'
           img.src = getFloorPlanUrl(structureId, floor)

@@ -1,267 +1,205 @@
 #!/usr/bin/env python3
 """
-NAVIN ML — 1D-CNN Activity Classifier (PyTorch)
-Input: (batch, 9 channels, 20 timesteps)
-Output: 3 classes — STAIRS(0), STATIONARY(1), WALKING(2)
+NAVIN ML — 1D-CNN Activity Classifier (PyTorch → ONNX)
+=======================================================
+Input:  raw window (20 samples @ 10 Hz × [accel x/y/z, rotationRate alpha/beta/gamma])
+Model:  posture-invariant features → z-score → Conv1D/BN/ReLU/Dropout ×2 → GAP → Linear
+Output: STAIRS(0), STATIONARY(1), WALKING(2)
+
+Steps:
+1. Leave-one-session-out evaluation, 3 seeds → honest weighted F1 (mean ± std)
+2. Random window split, for comparison only — shows how much leakage inflates scores
+3. Train the final model on every session
+4. Export to ONNX (preprocessing baked in), verify it matches PyTorch, time it
+5. Write the model card and copy ONNX + card into backend/app/ml/ for serving
+
+Usage: python3 ml/scripts/train_cnn.py
 """
 
-import os
 import json
+import os
+import shutil
+import time
+import warnings
+from datetime import date
+
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import TensorDataset, DataLoader
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
 
-# ============================================================================
-# PATHS
-# ============================================================================
-DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'processed')
-MODEL_DIR = os.path.join(os.path.dirname(__file__), '..', 'models')
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), '..', 'results')
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(RESULTS_DIR, exist_ok=True)
+from navin_ml import (BACKEND_MODEL_DIR, CLASSES, FEATURE_NAMES, MODEL_DIR, PROCESSED_DIR, RATE_HZ,
+                      RESULTS_DIR, WINDOW_SIZE, ActivityNetProbs, fit_cnn,
+                      leave_one_session_out, load_processed, predict_proba, summarize)
 
-# ============================================================================
-# HYPERPARAMETERS
-# ============================================================================
-BATCH_SIZE = 16
-LEARNING_RATE = 0.001
-EPOCHS = 50
-PATIENCE = 10       # early stopping: stop if val loss doesn't improve for 10 epochs
-DROPOUT = 0.2
-NUM_CLASSES = 3
+warnings.filterwarnings('ignore')
 
-# ============================================================================
-# MODEL
-# ============================================================================
-class ActivityCNN(nn.Module):
-    def __init__(self, in_channels=9, num_classes=3):
-        super().__init__()
-
-        # Conv Block 1: 9 channels → 32 filters, kernel=3
-        self.conv1 = nn.Conv1d(in_channels, 32, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm1d(32)
-
-        # Conv Block 2: 32 → 64 filters, kernel=3
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm1d(64)
-
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(DROPOUT)
-
-        # GlobalAveragePooling → collapses time axis → shape becomes (batch, 64)
-        self.gap = nn.AdaptiveAvgPool1d(1)
-
-        # Final classifier: 64 → 3 classes
-        self.fc = nn.Linear(64, num_classes)
-
-    def forward(self, x):
-        # x shape: (batch, 9, 20)
-
-        x = self.conv1(x)         # (batch, 32, 20)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-
-        x = self.conv2(x)         # (batch, 64, 20)
-        x = self.bn2(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-
-        x = self.gap(x)           # (batch, 64, 1)
-        x = x.squeeze(-1)         # (batch, 64)
-
-        x = self.fc(x)            # (batch, 3)
-        return x
+EPOCHS = 40
+SEEDS = [0, 1, 2]
+ONNX_NAME = 'activity_cnn.onnx'
 
 
-# ============================================================================
-# DATA LOADING
-# ============================================================================
-def load_data():
-    X_train = np.load(os.path.join(DATA_DIR, 'X_train.npy'))
-    y_train = np.load(os.path.join(DATA_DIR, 'y_train.npy'))
-    X_val = np.load(os.path.join(DATA_DIR, 'X_val.npy'))
-    y_val = np.load(os.path.join(DATA_DIR, 'y_val.npy'))
-    X_test = np.load(os.path.join(DATA_DIR, 'X_test.npy'))
-    y_test = np.load(os.path.join(DATA_DIR, 'y_test.npy'))
-
-    # Reshape: (N, 20, 9) → (N, 9, 20) — PyTorch Conv1d expects channels first
-    X_train = np.transpose(X_train, (0, 2, 1))
-    X_val = np.transpose(X_val, (0, 2, 1))
-    X_test = np.transpose(X_test, (0, 2, 1))
-
-    # Convert to PyTorch tensors
-    train_ds = TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train))
-    val_ds = TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val))
-    test_ds = TensorDataset(torch.FloatTensor(X_test), torch.LongTensor(y_test))
-
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE)
-
-    return train_loader, val_loader, test_loader, y_test
+def loso(X, y, groups, seed):
+    fp = lambda Xtr, ytr, Xte: predict_proba(fit_cnn(Xtr, ytr, EPOCHS, seed)[0], Xte).argmax(1)
+    return leave_one_session_out(X, y, groups, fp)
 
 
-# ============================================================================
-# TRAINING LOOP
-# ============================================================================
-def train_one_epoch(model, loader, criterion, optimizer, device):
-    model.train()
-    total_loss = 0
-    correct = 0
-    total = 0
-
-    for X_batch, y_batch in loader:
-        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-
-        optimizer.zero_grad()
-        outputs = model(X_batch)
-        loss = criterion(outputs, y_batch)
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item() * len(y_batch)
-        correct += (outputs.argmax(1) == y_batch).sum().item()
-        total += len(y_batch)
-
-    return total_loss / total, correct / total
+def export_onnx(model, path):
+    wrapper = ActivityNetProbs(model).eval()
+    dummy = torch.zeros(1, WINDOW_SIZE, 6)
+    torch.onnx.export(
+        wrapper, dummy, path,
+        input_names=['window'], output_names=['probabilities'],
+        dynamic_axes={'window': {0: 'batch'}, 'probabilities': {0: 'batch'}},
+        opset_version=17, dynamo=False,
+    )
 
 
-def evaluate(model, loader, criterion, device):
-    model.eval()
-    total_loss = 0
-    correct = 0
-    total = 0
-    all_preds = []
+def check_onnx(path, model, X):
+    import onnxruntime as ort
+    sess = ort.InferenceSession(path, providers=['CPUExecutionProvider'])
+    onnx_probs = sess.run(None, {'window': X})[0]
+    torch_probs = predict_proba(model, X)
+    single = X[:1]
+    for _ in range(20):                      # warm-up
+        sess.run(None, {'window': single})
+    times = []
+    for i in range(500):
+        t0 = time.perf_counter()
+        sess.run(None, {'window': X[i % len(X):i % len(X) + 1]})
+        times.append((time.perf_counter() - t0) * 1000)
+    return {
+        'max_abs_prob_diff': float(np.abs(onnx_probs - torch_probs).max()),
+        'argmax_agreement': float((onnx_probs.argmax(1) == torch_probs.argmax(1)).mean()),
+        'latency_ms_p50': round(float(np.percentile(times, 50)), 3),
+        'latency_ms_p95': round(float(np.percentile(times, 95)), 3),
+    }
 
-    with torch.no_grad():
-        for X_batch, y_batch in loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            outputs = model(X_batch)
-            loss = criterion(outputs, y_batch)
 
-            total_loss += loss.item() * len(y_batch)
-            correct += (outputs.argmax(1) == y_batch).sum().item()
-            total += len(y_batch)
-            all_preds.extend(outputs.argmax(1).cpu().numpy())
+def save_plots(cm, history):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
 
-    return total_loss / total, correct / total, np.array(all_preds)
+    cm = np.asarray(cm)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.imshow(cm, cmap='Blues')
+    ax.set_title('1D-CNN — leave-one-session-out (seed 0)')
+    ax.set_xlabel('Predicted'); ax.set_ylabel('True')
+    ax.set_xticks(range(len(CLASSES)), CLASSES); ax.set_yticks(range(len(CLASSES)), CLASSES)
+    for i in range(len(CLASSES)):
+        for j in range(len(CLASSES)):
+            ax.text(j, i, cm[i, j], ha='center', va='center', color='white' if cm[i, j] > cm.max() / 2 else 'black')
+    fig.tight_layout(); fig.savefig(os.path.join(RESULTS_DIR, 'confusion_matrix.png'), dpi=150); plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(range(1, len(history) + 1), history)
+    ax.set_title('Final model — training loss'); ax.set_xlabel('Epoch'); ax.set_ylabel('Weighted cross-entropy')
+    ax.grid(alpha=0.3)
+    fig.tight_layout(); fig.savefig(os.path.join(RESULTS_DIR, 'training_curve.png'), dpi=150); plt.close(fig)
 
 
-# ============================================================================
-# MAIN
-# ============================================================================
 def main():
     print("=" * 60)
-    print("NAVIN ML — 1D-CNN Training (PyTorch)")
+    print("NAVIN ML — 1D-CNN Training (PyTorch → ONNX)")
     print("=" * 60)
+    X, y, groups = load_processed()
+    with open(os.path.join(PROCESSED_DIR, 'metadata.json')) as f:
+        meta = json.load(f)
+    print(f"  Windows: {X.shape}, sessions: {len(meta['sessions'])}")
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Device: {device}")
+    # 1. Honest evaluation
+    per_seed = []
+    for seed in SEEDS:
+        preds = loso(X, y, groups, seed)
+        per_seed.append(summarize(y, preds))
+        print(f"  LOSO seed {seed}: weighted F1 {per_seed[-1]['weighted_f1']:.4f}")
+        if seed == SEEDS[0]:
+            print(classification_report(y, preds, target_names=CLASSES, zero_division=0))
+    wf1 = np.array([m['weighted_f1'] for m in per_seed])
+    mf1 = np.array([m['macro_f1'] for m in per_seed])
 
-    # Load data
-    train_loader, val_loader, test_loader, y_test = load_data()
-    print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}, Test batches: {len(test_loader)}")
+    # 2. Leaky random split — reported only to show the inflation
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+    random_split = summarize(yte, predict_proba(fit_cnn(Xtr, ytr, EPOCHS, 0)[0], Xte).argmax(1))
+    print(f"  Random window split (leaky): weighted F1 {random_split['weighted_f1']:.4f}")
 
-    # Model
-    model = ActivityCNN().to(device)
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"Model parameters: {total_params:,}")
+    # 3. Final model
+    model, history = fit_cnn(X, y, EPOCHS, seed=0)
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    torch.save(model.state_dict(), os.path.join(MODEL_DIR, 'cnn_activity.pth'))
+    params = sum(p.numel() for p in model.parameters())
 
-    # Loss and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    # 4. ONNX export + parity
+    onnx_path = os.path.join(MODEL_DIR, ONNX_NAME)
+    export_onnx(model, onnx_path)
+    onnx_check = check_onnx(onnx_path, model, X)
+    print(f"  ONNX parity: max |Δp| = {onnx_check['max_abs_prob_diff']:.2e}, "
+          f"argmax agreement {onnx_check['argmax_agreement']:.1%}, "
+          f"p50 {onnx_check['latency_ms_p50']} ms / p95 {onnx_check['latency_ms_p95']} ms")
+    assert onnx_check['argmax_agreement'] == 1.0 and onnx_check['max_abs_prob_diff'] < 1e-4, "ONNX mismatch"
 
-    # Training with early stopping
-    best_val_loss = float('inf')
-    patience_counter = 0
-    best_model_state = None
-    history = {'train_loss': [], 'val_loss': [], 'train_acc': [], 'val_acc': []}
+    # 5. Metrics, model card, plots
+    baseline_path = os.path.join(RESULTS_DIR, 'baseline_metrics.json')
+    baseline = json.load(open(baseline_path)) if os.path.exists(baseline_path) else None
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    print(f"\n{'Epoch':>5} | {'Train Loss':>10} | {'Train Acc':>9} | {'Val Loss':>10} | {'Val Acc':>9}")
-    print("-" * 55)
-
-    for epoch in range(1, EPOCHS + 1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc, _ = evaluate(model, val_loader, criterion, device)
-
-        history['train_loss'].append(train_loss)
-        history['val_loss'].append(val_loss)
-        history['train_acc'].append(train_acc)
-        history['val_acc'].append(val_acc)
-
-        print(f"{epoch:>5} | {train_loss:>10.4f} | {train_acc:>8.1%} | {val_loss:>10.4f} | {val_acc:>8.1%}")
-
-        # Early stopping check
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            best_model_state = model.state_dict().copy()
-        else:
-            patience_counter += 1
-            if patience_counter >= PATIENCE:
-                print(f"\nEarly stopping at epoch {epoch} (no improvement for {PATIENCE} epochs)")
-                break
-
-    # Load best model
-    model.load_state_dict(best_model_state)
-
-    # Final evaluation on test set
-    test_loss, test_acc, y_pred = evaluate(model, test_loader, criterion, device)
-
-    with open(os.path.join(DATA_DIR, 'class_names.json')) as f:
-        label_map = json.load(f)
-    class_names = [k for k, v in sorted(label_map.items(), key=lambda x: x[1])]
-
-    test_f1 = f1_score(y_test, y_pred, average='weighted')
-
-    print(f"\n{'='*55}")
-    print(f"TEST RESULTS")
-    print(f"{'='*55}")
-    print(f"Test Loss: {test_loss:.4f}")
-    print(f"Test Acc:  {test_acc:.1%}")
-    print(f"Test F1:   {test_f1:.4f}")
-
-    print(f"\n{classification_report(y_test, y_pred, target_names=class_names)}")
-
-    cm = confusion_matrix(y_test, y_pred)
-    print(f"Confusion Matrix:")
-    print(f"{'':>12} {'STAIRS':>10} {'STATION':>10} {'WALKING':>10}  <- predicted")
-    for i, name in enumerate(class_names):
-        row = '  '.join(f'{cm[i,j]:>8}' for j in range(len(class_names)))
-        print(f"  {name:>10} {row}")
-
-    # Save model
-    model_path = os.path.join(MODEL_DIR, 'cnn_activity.pth')
-    torch.save(model.state_dict(), model_path)
-    print(f"\nModel saved: {model_path}")
-
-    # Save metrics
-    metrics = {
-        'model': '1D-CNN (2 conv layers)',
-        'framework': 'PyTorch',
-        'hyperparameters': {
-            'batch_size': BATCH_SIZE,
-            'learning_rate': LEARNING_RATE,
-            'dropout': DROPOUT,
-            'epochs_trained': len(history['train_loss']),
-            'patience': PATIENCE,
-        },
-        'total_params': total_params,
-        'test_f1_weighted': round(float(test_f1), 4),
-        'test_accuracy': round(float(test_acc), 4),
-        'test_classification_report': classification_report(
-            y_test, y_pred, target_names=class_names, output_dict=True
-        ),
-        'test_confusion_matrix': cm.tolist(),
-        'training_history': history,
+    cnn_metrics = {
+        'model': '1D-CNN (2 conv blocks + GAP)', 'framework': 'PyTorch → ONNX',
+        'evaluation': 'leave-one-session-out', 'seeds': SEEDS, 'epochs': EPOCHS,
+        'weighted_f1_mean': round(float(wf1.mean()), 4), 'weighted_f1_std': round(float(wf1.std()), 4),
+        'macro_f1_mean': round(float(mf1.mean()), 4),
+        'per_seed': per_seed,
+        'random_split_weighted_f1': random_split['weighted_f1'],
+        'total_params': params, 'final_train_loss': history, 'onnx': onnx_check,
     }
-    metrics_path = os.path.join(RESULTS_DIR, 'cnn_metrics.json')
-    with open(metrics_path, 'w') as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Metrics saved: {metrics_path}")
+    with open(os.path.join(RESULTS_DIR, 'cnn_metrics.json'), 'w') as f:
+        json.dump(cnn_metrics, f, indent=2)
+
+    card = {
+        'name': 'NAVIN activity classifier',
+        'version': date.today().isoformat(),
+        'architecture': 'Posture-invariant features → Conv1D(32)/BN/ReLU/Dropout → Conv1D(64)/BN/ReLU/Dropout → GlobalAvgPool → Linear',
+        'framework': 'PyTorch → ONNX Runtime',
+        'params': params,
+        'classes': CLASSES,
+        'input': {
+            'window_samples': WINDOW_SIZE, 'rate_hz': RATE_HZ,
+            'sample_layout': ['accel_x', 'accel_y', 'accel_z', 'rotation_alpha', 'rotation_beta', 'rotation_gamma'],
+            'units': 'accelerationIncludingGravity m/s², rotationRate °/s',
+        },
+        'model_channels': FEATURE_NAMES,
+        'data': {k: meta[k] for k in ('sessions', 'unique_minutes', 'windows', 'class_windows', 'duplicate_rows_dropped')},
+        'evaluation': {
+            'method': 'leave-one-session-out', 'seeds': len(SEEDS),
+            'cnn': {
+                'weighted_f1_mean': cnn_metrics['weighted_f1_mean'], 'weighted_f1_std': cnn_metrics['weighted_f1_std'],
+                'macro_f1_mean': cnn_metrics['macro_f1_mean'],
+                'per_class_f1': per_seed[0]['per_class_f1'], 'confusion_matrix': per_seed[0]['confusion_matrix'],
+            },
+            'random_forest': None if baseline is None else {
+                'weighted_f1': baseline['weighted_f1'], 'macro_f1': baseline['macro_f1'],
+                'per_class_f1': baseline['per_class_f1'],
+            },
+            'random_split_weighted_f1': random_split['weighted_f1'],
+        },
+        'onnx': onnx_check,
+    }
+    with open(os.path.join(MODEL_DIR, 'model_card.json'), 'w') as f:
+        json.dump(card, f, indent=2)
+    save_plots(per_seed[0]['confusion_matrix'], history)
+
+    os.makedirs(BACKEND_MODEL_DIR, exist_ok=True)
+    shutil.copy(onnx_path, os.path.join(BACKEND_MODEL_DIR, ONNX_NAME))
+    shutil.copy(os.path.join(MODEL_DIR, 'model_card.json'), os.path.join(BACKEND_MODEL_DIR, 'model_card.json'))
+
+    print("\n" + "=" * 60)
+    print(f"CNN weighted F1 (leave-one-session-out): {wf1.mean():.4f} ± {wf1.std():.4f}")
+    if baseline:
+        print(f"RF  weighted F1 (leave-one-session-out): {baseline['weighted_f1']:.4f}")
+    print(f"Random split (leaky, for reference):     {random_split['weighted_f1']:.4f}")
+    print(f"Exported → {onnx_path}\n         → {BACKEND_MODEL_DIR}")
+    print("=" * 60)
 
 
 if __name__ == '__main__':

@@ -1,4 +1,8 @@
 """Shared test fixtures — in-memory SQLite + test client."""
+import os
+
+os.environ.setdefault("SEED_DEMO_DATA", "false")  # tests seed their own fixtures
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

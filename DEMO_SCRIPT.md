@@ -7,166 +7,117 @@
 
 ## Pre-Demo Checklist (do 5 minutes before)
 
-- [ ] Backend running locally OR Render URL is live
-- [ ] Frontend open on laptop: `https://navin-black.vercel.app/` (or localhost)
-- [ ] Phone ready on same WiFi with frontend URL loaded
-- [ ] Admin dashboard open in a separate tab: `/admin`
-- [ ] PPT loaded and ready
+- [ ] **Wake the backend:** open `https://navin-black.vercel.app/` on the laptop and wait for **● Server online** under the Demo Entry button (free hosting sleeps; waking takes up to a minute).
+- [ ] Phone: Chrome open on the same URL, screen timeout ≥ 10 min, Do Not Disturb on.
+- [ ] Admin dashboard open in a laptop tab: `/admin` (bookmark `/admin?tab=ml` and `/admin?tab=pso` too).
+- [ ] Do one practice run: Demo Entry on the phone → **Enable Sensors** → check that the Activity AI card shows **CNN LIVE**.
+- [ ] PPT loaded and ready.
 
 ---
 
 ## PART 1: Slides (5 minutes)
 
 ### Slide 1 — Title (30 sec)
-> **Say:** "Good [morning/afternoon]. We presenting NAVIN — an Indoor Parking Navigation System. The core idea is simple: what happens when GPS dies the moment you drive into a parking garage? NAVIN solves this using the sensors already in your phone."
+> **Say:** "Good [morning/afternoon]. We're presenting NAVIN — an Indoor Parking Navigation System. The core idea is simple: what happens when GPS dies the moment you drive into a parking garage? NAVIN solves this using the sensors already in your phone."
 
 - Point to the GitHub URL: `github.com/Bajaj30/NAVIN`
 
 ---
 
 ### Slide 2 — The Problem (45 sec)
-> **Say:** "Every GPS-based app — Google Maps, Waze, Apple Maps — completely loses signal inside parking structures. Concrete walls and steel rebar block satellite signals. The result? Drivers waste 5 to 15 minutes circling for spots, and later struggle to find their car."
+> **Say:** "Every GPS-based app — Google Maps, Waze, Apple Maps — loses signal inside parking structures. Concrete and steel rebar block satellite signals. Drivers waste 5 to 15 minutes circling for spots, and later struggle to find their car."
 
 **Key point to emphasize:** *This isn't a niche problem — every multi-level parking structure has this.*
 
 ---
 
 ### Slide 3 — NAVIN Solution (45 sec)
-> **Say:** "NAVIN takes three approaches to solve this:"
-
-1. **"Zero-Install PWA"** — "It's a Progressive Web App. No app store download, no account creation. Open a URL and you're in."
-2. **"Sensor-Based Positioning"** — "We use the magnetometer, accelerometer, and gyroscope already in your phone to track position and detect walking vs stationary."
-3. **"QR-Gate Management"** — "Sessions are managed via QR codes at entry and exit gates — simple, clean, no extra hardware."
+1. **"Zero-Install PWA"** — "Open a URL from a QR sticker. No app store, no account."
+2. **"Sensor-based intelligence"** — "Accelerometer and gyroscope tell us what you're doing — walking, on the stairs, or parked — and the compass + step count track where you are."
+3. **"QR-Gate Management"** — "Sessions start and end with QR codes at the gates — no extra hardware."
 
 ---
 
 ### Slide 4 — Core Features (45 sec)
-> **Say:** "Let me walk through the four core features we've built:"
-
 1. **QR Entry** — "Scan at the gate, session starts instantly"
-2. **Live Sensors** — "Real-time accelerometer, gyroscope, compass displayed on screen"
-3. **Occupancy Grid** — "Backend tracks which bays are free or taken, updates live"
-4. **Admin Dashboard** — "Facility managers see everything — sessions, logs, stats, floor plans"
+2. **Activity AI** — "A 1D-CNN classifies your movement every second and detects when you've parked"
+3. **Occupancy Grid** — "Bays go red/green live for every driver"
+4. **Admin Dashboard** — "Live sessions with each driver's activity, logs, QR codes, floor plans, and the model card"
 
 > "I'll demo all four of these live in a moment."
 
 ---
 
 ### Slide 5 — Tech Stack (30 sec)
-> **Say:** "Quick tech overview — FastAPI backend with SQLAlchemy ORM, React 18 frontend with Vite and Tailwind CSS, deployed on Render and Vercel. The sensor pipeline collects data at 60Hz, throttles UI to 15fps, and batch-sends to the backend."
-
-*Don't linger here — move on quickly.*
+> **Say:** "React PWA on Vercel, FastAPI on Render — all free tier. The phone samples motion at 10 Hz and sends a 2-second window every second to the backend, where a PyTorch-trained CNN runs on ONNX Runtime in well under a millisecond. If the model is unreachable, an on-device heuristic takes over automatically."
 
 ---
 
 ### Slide 6 — User Flow (45 sec)
-> **Say:** "The user journey is four steps:"
-
-Draw a visual flow with your hand:
 1. **Entry** → "Scan QR at the gate"
-2. **Navigate** → "Walk with phone, system tracks steps and heading"
-3. **Park** → "Activity classifier detects you've stopped moving — auto-transitions to PARKED"
-4. **Exit** → "Scan exit QR, session closes, bay freed"
-
-> "The activity classifier uses a state machine — not simple thresholds. It requires sustained stillness before confirming parking, avoiding false triggers."
+2. **Navigate** → "Walk with the phone; the system tracks steps, heading and activity"
+3. **Park** → "The CNN sees sustained stillness for about eight seconds and suggests parking"
+4. **Exit** → "Exit closes the session and frees the bay"
 
 ---
 
-### Slide 7 — Sensor Tracking (30 sec)
-> **Say:** "Under the hood, we're reading three sensor streams: the magnetometer for compass heading, the accelerometer for step detection and movement magnitude, and the gyroscope for turn detection — left turn, right turn. These combine to give us dead reckoning positioning without any GPS."
+### Slide 7 — The ML Model (45 sec)
+> **Say:** "We collected our own labelled data with a web collector page — walking, stairs, standing still — then trained a 1D-CNN. Two engineering decisions mattered most:"
+1. "**Posture-invariant inputs** — we split acceleration and rotation along gravity, so it works whether the phone is in your hand, your pocket, or in front of you. Our first model failed exactly there."
+2. "**Honest evaluation** — we test on whole recordings the model never saw. That gives 94% weighted F1, versus 80% for a Random Forest baseline. A random split would have claimed 97%, but that number leaks."
 
 ---
 
-### Slide 8 — Admin Dashboard (30 sec)
-> **Say:** "The admin side gives full visibility — live session table, occupancy heatmap, server logs, QR code generation, and floor plan upload. Admins can upload their own parking structure blueprint and the system renders it as the navigation background."
+### Slide 8 — Admin Dashboard (20 sec)
+> **Say:** "Facility managers see live sessions — including what each driver is doing right now — plus logs, QR codes and floor plans."
 
 ---
 
 ### Slide 9 — Future Work (15 sec)
-> **Say:** "For future phases: native app for background tracking, magnetic fingerprint matching for sub-meter accuracy, and BLE beacon anchoring for turn-by-turn guidance."
-
-*Keep this brief — this is aspirational, not built.*
+> **Say:** "Next is metre-level positioning from magnetic fingerprints of the steel in the building. We've prototyped the particle-swarm correction layer in simulation — I'll show it. On real phones it needs a fingerprint survey and raw magnetometer access."
 
 ---
 
-### Slide 10 — Closing (15 sec)
-> **Say:** "That's the overview. Let me now show you NAVIN working live."
-
-**Transition to live demo →**
+### Slide 10 — Closing (10 sec)
+> **Say:** "Let me show you NAVIN working live."
 
 ---
 
 ## PART 2: Live Demo (4 minutes)
 
-### Demo Step 1: Entry Gate (45 sec)
+### Demo Step 1: Entry Gate (30 sec)
+1. **On the phone**, open `https://navin-black.vercel.app/`
+2. > **Say:** "This is the entry gate. A driver scans the QR posted at the entrance — for the demo I'll use the demo button."
+3. Tap **Demo Entry (No QR)** → session created, zone assigned.
 
-1. **On laptop**, open `https://navin-black.vercel.app/`
-2. > **Say:** "This is the entry gate screen. In production, a driver would scan the QR code posted at the parking entrance. For this demo, I'll use the demo button."
-3. Click **"Demo Entry (No QR)"**
-4. > **Say:** "Session created instantly — I've been assigned zone D, and the system starts collecting sensor data."
+### Demo Step 2: Navigate + Activity AI (1 min 30 sec)
+1. Tap **Enable Sensors** (iOS and recent Chrome ask for permission).
+2. Hold the phone still in front of you, then point to the **Activity AI** card:
+   > **Say:** "Every second the phone sends the last two seconds of motion to our CNN. Right now it says Stationary with high confidence — that's the model on the server, 'CNN LIVE', with the round-trip time here."
+3. **Walk** a few steps (keep the phone in hand):
+   > **Say:** "Now it flips to Walking — notice the probabilities shift. Stairs is a separate class; telling stairs from walking is exactly what a simple threshold can't do."
+4. **Stop and stand still ~8 seconds** → the **Vehicle appears parked** banner appears.
+   > **Say:** "Sustained stillness — the system suggests I've parked."
+5. Point to the **Floor Map** and **Parking Bays**: "Dead reckoning moves the dot with steps and heading; green bays are free."
 
----
+### Demo Step 3: Park + Exit (30 sec)
+1. Tap a **free bay** (e.g. C1) → Parked page shows bay, zone, duration counting up.
+2. Tap **Exit Parking** → "Session closed, bay freed for the next driver."
 
-### Demo Step 2: Navigate Page (1 min 15 sec)
-
-1. Point to the **Sensor Data** card:
-   > **Say:** "Here you can see three columns of live sensor data — Orientation from the compass, Accelerometer measuring movement force, and Gyroscope tracking rotation speed."
-
-2. **Pick up the phone/laptop and tilt it** to show values changing:
-   > **Say:** "Watch the values change as I move — the compass heading updates, accelerometer shows movement, and the activity classifier in the header switches between WALKING and STATIONARY."
-
-3. Point to the **Floor Map**:
-   > **Say:** "This canvas-based map shows the parking structure layout. The blue dot is my estimated position using dead reckoning — each step I take moves the dot based on my compass heading. In production, the admin uploads their actual floor plan as the background."
-
-4. Point to the **Occupancy Grid**:
-   > **Say:** "Below the map, every parking bay is shown — green means free, red means taken. The lightning bolt indicates EV/premium spots."
-
----
-
-### Demo Step 3: Park (30 sec)
-
-1. Click a **free bay** (e.g., C1):
-   > **Say:** "I'll park in bay C1."
-
-2. Show the **Parked page**:
-   > **Say:** "The system confirms parking — Bay C1, Zone B, Duration 0 minutes. This duration counts up in real-time. Notice there's no timezone offset bug — it correctly shows 0 minutes."
-
----
-
-### Demo Step 4: Exit (15 sec)
-
-1. Click **"Exit Parking"**:
-   > **Say:** "Exiting frees the bay and ends the session. Bay C1 is now available for the next driver."
-
----
-
-### Demo Step 5: Admin Dashboard (1 min)
-
-1. Navigate to `/admin`:
-   > **Say:** "Now let me show the admin side."
-
-2. Point to **stat cards**:
-   > **Say:** "Live stats — active sessions, parked vehicles, exits today, and total sensor batches collected."
-
-3. Point to **sessions table**:
-   > **Say:** "Every session is tracked — you can see the one I just completed, marked as EXITED with the correct duration."
-
-4. Click **"Logs"** tab:
-   > **Say:** "Server logs stream in real-time — useful for debugging and monitoring."
-
-5. Click **"QR Codes"** tab:
-   > **Say:** "Auto-generated QR codes that you'd print and post at physical gates."
-
-6. Click **"Map"** tab:
-   > **Say:** "And finally, admins can upload their parking structure floor plan here — set the physical dimensions and it becomes the navigation background."
+### Demo Step 4: Admin Dashboard (1 min 30 sec)
+1. Laptop → `/admin` → **Sessions**:
+   > **Say:** "Every session, with the CNN's latest activity per driver."
+2. **🤖 ML Model** tab:
+   > **Say:** "The model card: 94% weighted F1 on held-out recordings versus 80% for the Random Forest. The random-split number is crossed out on purpose — it leaks. Here's the confusion matrix; most remaining errors are stairs versus walking."
+3. **🛰️ Positioning** tab, set **4×**:
+   > **Say:** "This is the next layer, in simulation. White is the true walk, orange is dead reckoning alone — it drifts metres off. Blue is particle swarm optimisation: 80 particles matching magnetometer readings against a fingerprint map. It stays within about a metre."
+   - Tap **Scatter swarm**: "Even if it loses track completely, the swarm relocks within a few seconds."
 
 ---
 
 ## PART 3: Wrap-Up (1 minute)
 
-> **Say:** "To summarize — NAVIN provides a complete indoor navigation solution using only the sensors in your phone. No GPS needed, no app download, no extra hardware. The system handles entry, navigation, parking detection, exit, and facility management through a clean PWA interface."
-
-> **Say:** "The repo is public at github.com/Bajaj30/NAVIN. Happy to take any questions."
+> **Say:** "To summarize — NAVIN gives you indoor parking navigation with nothing but your phone: QR gates for sessions, a CNN for activity and parking detection, and a clear path to metre-level positioning. No GPS, no app download, no extra hardware. The repo is public at github.com/Bajaj30/NAVIN. Happy to take questions."
 
 ---
 
@@ -174,10 +125,12 @@ Draw a visual flow with your hand:
 
 | Problem | Solution |
 |---------|----------|
-| Render backend is sleeping | Use local servers: `localhost:5173` + `localhost:8000` |
-| Sensors show 0.0 on laptop | Normal — sensors only work on mobile. Explain this and show the architecture |
-| Camera access denied on entry | Use the "Demo Entry (No QR)" button |
-| Page loads but API fails | Switch to localhost demo, show network tab to explain the architecture |
+| "Waking up the server" banner on entry | Normal for free hosting — wait (≤ 1 min). Avoid it by opening the site 2 min early. |
+| Activity AI shows **SENSORS OFF** | Tap **Enable Sensors** at the top of the Navigate screen. |
+| Activity AI shows **HEURISTIC FALLBACK** | The model API is unreachable; the app keeps working on the on-device heuristic. Say so — it's the designed fallback. |
+| Sensors show 0.0 on the laptop | Laptops have no motion sensors — demo on the phone; use the laptop for admin. |
+| Camera access denied on entry | Use **Demo Entry (No QR)**. |
+| Backend down entirely | Run locally: `uvicorn app.main:app --port 8000` + `npm run dev`, phone via the laptop's LAN IP. |
 
 ---
 
@@ -185,8 +138,8 @@ Draw a visual flow with your hand:
 
 | Section | Duration | Cumulative |
 |---------|----------|------------|
-| Slides 1-3 (Problem + Solution) | 2:00 | 2:00 |
-| Slides 4-8 (Features + Tech) | 2:45 | 4:45 |
-| Slides 9-10 (Future + Transition) | 0:30 | 5:15 |
-| Live Demo (Entry → Park → Exit → Admin) | 3:45 | 9:00 |
-| Wrap-up + Q&A | 1:00 | **10:00** |
+| Slides 1–3 (Problem + Solution) | 2:00 | 2:00 |
+| Slides 4–8 (Features, Stack, ML, Admin) | 2:40 | 4:40 |
+| Slides 9–10 (Future + Transition) | 0:25 | 5:05 |
+| Live Demo (Entry → AI → Park/Exit → Admin) | 4:00 | 9:05 |
+| Wrap-up + Q&A | 0:55 | **10:00** |

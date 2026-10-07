@@ -1,23 +1,49 @@
 {
   "window_size": 20,
   "stride": 10,
-  "num_channels": 9,
-  "label_map": {
-    "STAIRS": 0,
-    "STATIONARY": 1,
-    "WALKING": 2
+  "sampling_rate_hz": 10,
+  "label_purity": 0.8,
+  "max_gap_ms": 500,
+  "raw_channels": [
+    "accel_x",
+    "accel_y",
+    "accel_z",
+    "gyro_x",
+    "gyro_y",
+    "gyro_z"
+  ],
+  "model_channels": [
+    "accel_magnitude",
+    "vertical_accel",
+    "horizontal_accel",
+    "turn_rate",
+    "tilt_rate"
+  ],
+  "classes": [
+    "STAIRS",
+    "STATIONARY",
+    "WALKING"
+  ],
+  "sessions": [
+    "session_001_walking_f1_hand",
+    "session_002_walking_f2_hand",
+    "session_003_stairs_normal_hand",
+    "session_004_stairs_mixed_hand",
+    "session_005.1_stationary_room_hand",
+    "session_005.2_stationary_room_table",
+    "session_006_mixed_full_hand",
+    "session_007_mixed_full_hand",
+    "session_009_walk_stairs_alt_hand"
+  ],
+  "raw_rows": 9480,
+  "duplicate_rows_dropped": 904,
+  "unique_minutes": 14.3,
+  "segments": 10,
+  "windows": 835,
+  "class_windows": {
+    "STAIRS": 242,
+    "STATIONARY": 204,
+    "WALKING": 389
   },
-  "split_method": "stratified_random",
-  "random_seed": 42,
-  "splits": {
-    "train": {
-      "windows": 652
-    },
-    "val": {
-      "windows": 140
-    },
-    "test": {
-      "windows": 140
-    }
-  }
+  "split_method": "leave-one-session-out (see train_*.py)"
 }

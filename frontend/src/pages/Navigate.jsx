@@ -2,11 +2,17 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import useSensors from '../hooks/useSensors'
 import useOccupancy from '../hooks/useOccupancy'
+import useMLClassifier from '../hooks/useMLClassifier'
 import SensorDisplay from '../components/SensorDisplay'
+import ActivityAICard from '../components/ActivityAICard'
 import OccupancyGrid from '../components/OccupancyGrid'
 import FloorMap from '../components/FloorMap'
 import { parkSession } from '../services/api'
 import { ActivityClassifier, ACTIVITY } from '../utils/activityClassifier'
+
+// CNN says STATIONARY continuously for this long → treat as parked
+// (each prediction already covers the previous 2 s, so ≈ 8 s of stillness in total)
+const ML_PARK_AFTER_MS = 6000
 
 export default function Navigate() {
   const { sessionId: urlSessionId } = useParams()
@@ -15,31 +21,56 @@ export default function Navigate() {
   const sessionId = urlSessionId || localStorage.getItem('navin_session_id')
   const structureId = localStorage.getItem('navin_structure_id') || 'struct_demo_001'
 
-  const { sensors, granted, requestPermission } = useSensors(sessionId, true)
+  const { sensors, granted, requestPermission, latestRef } = useSensors(sessionId, true)
   const { bays, refresh } = useOccupancy(structureId)
+  const ml = useMLClassifier(latestRef, sessionId, granted && !!sessionId)
 
-  const [activity, setActivity] = useState(ACTIVITY.UNKNOWN)
+  const [heuristicActivity, setHeuristicActivity] = useState(ACTIVITY.UNKNOWN)
+  const [mlActivity, setMlActivity] = useState(null)
   const [selectedFloor, setSelectedFloor] = useState(0)
   const [showParkBanner, setShowParkBanner] = useState(false)
   const [parking, setParking] = useState(false)
   const [error, setError] = useState(null)
 
   const classifierRef = useRef(new ActivityClassifier())
+  const mlStationarySinceRef = useRef(null)
 
-  // Activity classification
+  // On-device heuristic — always running, used whenever the CNN isn't live
   useEffect(() => {
-    const classifier = classifierRef.current
-    classifier.onStateChange = (newState) => {
-      setActivity(newState)
-      if (newState === ACTIVITY.PARKED) {
-        setShowParkBanner(true)
-      }
-    }
+    classifierRef.current.onStateChange = (newState) => setHeuristicActivity(newState)
   }, [])
 
   useEffect(() => {
     classifierRef.current.update(sensors)
   }, [sensors])
+
+  // CNN prediction → app activity; sustained STATIONARY ⇒ PARKED
+  useEffect(() => {
+    const p = ml.prediction
+    if (ml.mode !== 'ml' || !p) {
+      mlStationarySinceRef.current = null
+      return
+    }
+    if (p.activity === 'STATIONARY') {
+      mlStationarySinceRef.current ??= p.at
+      setMlActivity(p.at - mlStationarySinceRef.current >= ML_PARK_AFTER_MS ? ACTIVITY.PARKED : ACTIVITY.STATIONARY)
+    } else {
+      mlStationarySinceRef.current = null
+      setMlActivity(p.activity === 'STAIRS' ? ACTIVITY.STAIRS : ACTIVITY.WALKING)
+    }
+  }, [ml.mode, ml.prediction])
+
+  const usingML = ml.mode === 'ml' && mlActivity !== null
+  const activity = usingML ? mlActivity : heuristicActivity
+
+  // Show the park banner on every transition into PARKED
+  const prevActivityRef = useRef(activity)
+  useEffect(() => {
+    if (activity === ACTIVITY.PARKED && prevActivityRef.current !== ACTIVITY.PARKED) {
+      setShowParkBanner(true)
+    }
+    prevActivityRef.current = activity
+  }, [activity])
 
   // Position is now handled by dead reckoning in FloorMap
 
@@ -73,6 +104,7 @@ export default function Navigate() {
   const activityColors = {
     [ACTIVITY.UNKNOWN]: 'text-white/40',
     [ACTIVITY.WALKING]: 'text-navin-400',
+    [ACTIVITY.STAIRS]: 'text-purple-400',
     [ACTIVITY.STATIONARY]: 'text-amber-400',
     [ACTIVITY.PARKED]: 'text-emerald-400',
   }
@@ -80,6 +112,7 @@ export default function Navigate() {
   const activityIcons = {
     [ACTIVITY.UNKNOWN]: '❓',
     [ACTIVITY.WALKING]: '🚶',
+    [ACTIVITY.STAIRS]: '🪜',
     [ACTIVITY.STATIONARY]: '⏸️',
     [ACTIVITY.PARKED]: '🅿️',
   }
@@ -100,6 +133,9 @@ export default function Navigate() {
               <span className={`text-2xl`}>{activityIcons[activity]}</span>
               <p className={`text-xs font-bold uppercase ${activityColors[activity]}`}>
                 {activity}
+              </p>
+              <p className="text-[9px] text-white/30 uppercase tracking-wide">
+                {usingML ? 'via CNN' : 'via heuristic'}
               </p>
             </div>
           </div>
@@ -131,10 +167,13 @@ export default function Navigate() {
               onClick={() => setShowParkBanner(false)}
               className="text-white/30 text-xs underline"
             >
-              Dismiss — I'm still walking
+              Dismiss — I&apos;m still walking
             </button>
           </div>
         )}
+
+        {/* Live CNN activity classification */}
+        <ActivityAICard ml={ml} heuristicActivity={heuristicActivity} />
 
         {/* Error */}
         {error && (

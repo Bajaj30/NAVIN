@@ -1,13 +1,15 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import QRScanner from '../components/QRScanner'
-import { createSession } from '../services/api'
+import { createSession, waitForBackend } from '../services/api'
+import useBackendStatus from '../hooks/useBackendStatus'
 
 export default function EntryGate() {
   const navigate = useNavigate()
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
   const [scanned, setScanned] = useState(false)
+  const { status: serverStatus, retry: retryServer } = useBackendStatus()
 
   const handleDecode = useCallback(async (data) => {
     if (scanned || loading) return
@@ -16,6 +18,8 @@ export default function EntryGate() {
     setError(null)
 
     try {
+      // A QR scan can arrive while the free-tier server is still waking up
+      if (!(await waitForBackend())) throw new Error('Server unreachable — check your connection and retry')
       const res = await createSession({
         structure_id: data.structure_id,
         gate: data.gate || 1,
@@ -64,7 +68,25 @@ export default function EntryGate() {
         {loading && (
           <div className="text-center py-8">
             <div className="w-10 h-10 mx-auto mb-3 rounded-full border-2 border-navin-400 border-t-transparent animate-spin" />
-            <p className="text-white/60 text-sm">Creating your session…</p>
+            <p className="text-white/60 text-sm">
+              {serverStatus === 'ready' ? 'Creating your session…' : 'Waiting for the server to wake up…'}
+            </p>
+          </div>
+        )}
+
+        {/* Server status (Render free tier cold start) */}
+        {serverStatus === 'waking' && !loading && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3">
+            <div className="w-4 h-4 shrink-0 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
+            <p className="text-amber-300 text-xs">
+              Waking up the server — free hosting sleeps when idle, this takes up to a minute.
+            </p>
+          </div>
+        )}
+        {serverStatus === 'offline' && (
+          <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center justify-between gap-3">
+            <p className="text-red-400 text-xs">Server unreachable.</p>
+            <button onClick={retryServer} className="text-xs text-white/70 underline">Retry</button>
           </div>
         )}
 
@@ -83,11 +105,14 @@ export default function EntryGate() {
         {/* Demo button for desktop testing */}
         <button
           onClick={handleDemoEntry}
-          disabled={loading}
-          className="w-full btn-secondary text-sm"
+          disabled={loading || serverStatus !== 'ready'}
+          className="w-full btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          🧪 Demo Entry (No QR)
+          {serverStatus === 'ready' ? '🧪 Demo Entry (No QR)' : '⏳ Connecting to server…'}
         </button>
+        {serverStatus === 'ready' && (
+          <p className="text-emerald-400/70 text-[10px] text-center mt-2">● Server online</p>
+        )}
       </div>
     </div>
   )

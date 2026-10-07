@@ -2,6 +2,7 @@
 export const ACTIVITY = {
   UNKNOWN: 'unknown',
   WALKING: 'walking',
+  STAIRS: 'stairs',          // only the CNN can tell stairs from walking
   STATIONARY: 'stationary',
   PARKED: 'parked',
 }
