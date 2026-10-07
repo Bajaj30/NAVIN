@@ -119,7 +119,3 @@ cd frontend && npm run lint && npm run build
 
 - Magnetic-fingerprint positioning on real phones: the PSO correction layer is prototyped in Admin → Positioning on a synthetic map. It needs a fingerprint survey and raw magnetometer access.
 - Native app for background tracking; BLE anchors for turn-by-turn guidance.
-
-## 📄 License
-
-MIT
