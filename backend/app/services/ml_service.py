@@ -22,6 +22,14 @@ _card: dict = {}
 _latencies: deque = deque(maxlen=500)   # recent server-side inference times (ms)
 _latest: dict = {}                      # session_id → latest prediction (in-memory, demo-scale)
 
+# Temporal smoothing: a session's prediction is the mean of its last few windows' probabilities.
+# Measured leave-one-session-out, this lifts weighted F1 from 0.941 to 0.960 (ml/scripts/train_cnn.py)
+# because single-window walking ↔ stairs flips get outvoted by their neighbours.
+SMOOTH_WINDOWS = 3
+SMOOTH_MAX_AGE_S = 3.0                  # windows arrive ~1/s; anything older belongs to a previous episode
+_history: dict[str, deque] = {}         # session_id → deque[(monotonic time, probabilities)]
+_prediction_count = 0                   # served since boot (admin dashboard)
+
 
 def load_model() -> None:
     """Load the model; on failure the API reports it unavailable and clients fall back to the heuristic."""
@@ -52,21 +60,44 @@ def window_shape() -> tuple[int, int]:
     return spec.get("window_samples", 20), len(spec.get("sample_layout", [])) or 6
 
 
-def predict(window: np.ndarray) -> dict:
-    """window: (samples, 6) raw accel x/y/z + rotationRate alpha/beta/gamma → class probabilities."""
+def _smoothed(session_id: str, probs: np.ndarray) -> tuple[np.ndarray, int]:
+    """Mean of this session's recent window probabilities (including this one) → (probs, windows used)."""
+    now = time.monotonic()
+    history = _history.setdefault(session_id, deque(maxlen=SMOOTH_WINDOWS))
+    while history and now - history[0][0] > SMOOTH_MAX_AGE_S:
+        history.popleft()
+    history.append((now, probs))
+    return np.mean([p for _, p in history], axis=0), len(history)
+
+
+def predict(window: np.ndarray, session_id: str | None = None) -> dict:
+    """window: (samples, 6) raw accel x/y/z + rotationRate alpha/beta/gamma → class probabilities.
+
+    With a session_id the result is smoothed over that session's last SMOOTH_WINDOWS windows;
+    `raw_activity` is always the single-window answer.
+    """
+    global _prediction_count
     t0 = time.perf_counter()
-    probs = _session.run(None, {"window": window[None].astype(np.float32)})[0][0]
+    raw = _session.run(None, {"window": window[None].astype(np.float32)})[0][0]
     ms = (time.perf_counter() - t0) * 1000
     _latencies.append(ms)
+    _prediction_count += 1
 
     classes = _card["classes"]
+    probs, used = _smoothed(session_id, raw) if session_id else (raw, 1)
     idx = int(np.argmax(probs))
     return {
         "activity": classes[idx],
         "confidence": round(float(probs[idx]), 4),
         "probabilities": {c: round(float(p), 4) for c, p in zip(classes, probs)},
+        "raw_activity": classes[int(np.argmax(raw))],
+        "smoothed_over": used,
         "inference_ms": round(ms, 3),
     }
+
+
+def prediction_count() -> int:
+    return _prediction_count
 
 
 def record(session_id: str, prediction: dict) -> None:

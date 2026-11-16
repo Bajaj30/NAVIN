@@ -94,6 +94,34 @@
       ]
     }
   ],
+  "smoothed": {
+    "windows": 3,
+    "weighted_f1_mean": 0.9602,
+    "weighted_f1_std": 0.004,
+    "per_class_f1": {
+      "STAIRS": 0.9514,
+      "STATIONARY": 0.9756,
+      "WALKING": 0.9687
+    },
+    "confusion_matrix": [
+      [
+        235,
+        1,
+        6
+      ],
+      [
+        4,
+        200,
+        0
+      ],
+      [
+        13,
+        5,
+        371
+      ]
+    ],
+    "note": "mean of the last 3 windows' probabilities within a recording, as the server does live; windows that straddle an activity change are not in the evaluation set, so the live gain is smaller right at transitions"
+  },
   "random_split_weighted_f1": 0.9722,
   "total_params": 7107,
   "final_train_loss": [
@@ -141,7 +169,7 @@
   "onnx": {
     "max_abs_prob_diff": 9.5367431640625e-07,
     "argmax_agreement": 1.0,
-    "latency_ms_p50": 0.033,
-    "latency_ms_p95": 0.055
+    "latency_ms_p50": 0.03,
+    "latency_ms_p95": 0.03
   }
 }

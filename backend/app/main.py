@@ -20,22 +20,14 @@ async def lifespan(app: FastAPI):
     yield
 
 
-import os
-
 app = FastAPI(title="NAVIN API", lifespan=lifespan)
 
-# CORS — allow frontend origins
-cors_origins = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
-cors_origins += [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "https://*.vercel.app",
-]
-
+# CORS — the deployed frontend reaches the API same-origin through Vercel's /api rewrite, so this
+# only matters for direct cross-origin calls: Vercel deployments, local dev, and CORS_ORIGINS extras.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # permissive for prototype — restrict in production
-    allow_credentials=True,
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_origin_regex=r"https://[a-z0-9-]+\.vercel\.app|http://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )

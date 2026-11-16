@@ -134,7 +134,7 @@ export default function MLModelPanel() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatTile label="1D-CNN weighted F1" value={pct(ev.cnn.weighted_f1_mean)}
-                  sub={`± ${(ev.cnn.weighted_f1_std * 100).toFixed(1)} over ${ev.seeds} seeds · leave-one-session-out`} />
+                  sub={`± ${(ev.cnn.weighted_f1_std * 100).toFixed(1)} over ${ev.seeds} seeds · leave-one-session-out${ev.cnn_smoothed ? ` · ${pct(ev.cnn_smoothed.weighted_f1_mean)} with ${ev.cnn_smoothed.windows}-window smoothing, as served` : ''}`} />
         <StatTile label="Random Forest baseline" value={pct(ev.random_forest?.weighted_f1)}
                   sub="Handcrafted features · same evaluation" />
         <StatTile label="Random window split" value={pct(ev.random_split_weighted_f1)} muted

@@ -24,9 +24,10 @@ NAVIN is a Progressive Web App that helps drivers navigate inside parking struct
 ## ✨ Features
 
 - **QR Entry/Exit**: scan at the gate to start or end a session; zero install.
-- **Live activity AI**: a 1D-CNN classifies WALKING / STAIRS / STATIONARY from 2-second motion windows. It's served by the backend, falls back to an on-device heuristic, and detects parking after ~8 s of stillness.
+- **Live activity AI**: a 1D-CNN classifies WALKING / STAIRS / STATIONARY from 2-second motion windows. It's served by the backend, smoothed over the last 3 windows, falls back to an on-device heuristic, and detects parking after ~8 s of stillness.
+- **Stairs → floor change**: a sustained stairs episode switches the map to the other floor (with undo). A browser has no barometer, so with more than two floors it asks which one.
 - **Posture-invariant model**: works with the phone in a hand, in a pocket, or held in front of you (it uses gravity-aligned features, not raw axes).
-- **Dead-reckoning map**: canvas floor map with step + heading positioning and the bay layout.
+- **Dead-reckoning map**: floor map drawn in metres. A peak-detecting step counter (gated by the CNN, so standing still doesn't move you) plus a wrap-safe heading (true compass where the phone exposes one, gyro-relative otherwise) move the dot 0.7 m per step. It drifts, as dead reckoning does: tap the map to correct it.
 - **Occupancy grid**: free/taken bays, updating live.
 - **Admin dashboard**: sessions with live CNN activity, server logs, QR codes, floor-plan upload, a **model card** (honest metrics, confusion matrix) and a **PSO positioning simulator**.
 - **Data collector**: `/collector.html` records labelled sensor CSVs for training (download or upload to the server).
@@ -38,7 +39,8 @@ Self-collected data: 9 recording sessions, 14.3 unique minutes at 10 Hz, 835 two
 
 | Model | Weighted F1, **leave-one-session-out** |
 |---|---|
-| **1D-CNN** (7.1k params) | **94.1% ± 0.5** (3 seeds) |
+| **1D-CNN** (7.1k params), single window | **94.1% ± 0.5** (3 seeds) |
+| 1D-CNN + 3-window smoothing (what the server returns live) | 96.0% ± 0.4 |
 | Random Forest on handcrafted features | 80.1% |
 | *1D-CNN on a random window split (leaky — not reported)* | *97.2%* |
 
@@ -90,7 +92,7 @@ Render's free tier sleeps after 15 minutes idle and wipes the disk on restart. T
 ## 🧪 Tests
 
 ```bash
-cd backend && pytest tests/ -v      # 33 tests: sessions, occupancy, admin, ML serving, seeding, uploads
+cd backend && pytest tests/ -v      # 38 tests: sessions, occupancy, admin, ML serving, seeding, uploads
 cd frontend && npm run lint && npm run build
 ```
 
@@ -105,9 +107,9 @@ cd frontend && npm run lint && npm run build
 | POST | `/api/sessions/{id}/exit` | End session, free bay |
 | GET | `/api/occupancy/{struct_id}` | Bay status list |
 | GET | `/api/occupancy/{struct_id}/summary` | Free/occupied counts |
-| POST | `/api/ml/predict` | Classify a 20×6 sensor window (optionally tagged with a session) |
+| POST | `/api/ml/predict` | Classify a 20×6 sensor window; with a `session_id` the answer is smoothed over that session's last 3 windows |
 | GET | `/api/ml/model` | Model card + live serving latency |
-| POST | `/api/sensors/batch` | Ingest raw sensor batch |
+| POST | `/api/sensors/batch` | Ingest raw sensor batch (the app no longer sends these) |
 | GET | `/api/sensors/position/{session_id}` | Zone-based position (stub) |
 | GET | `/api/qr/{struct_id}` · `/exit` | Entry / exit QR PNG |
 | GET | `/api/admin/stats` · `/sessions` · `/logs` | Dashboard data |

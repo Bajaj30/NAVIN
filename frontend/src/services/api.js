@@ -40,7 +40,6 @@ export const getOccupancy   = (structureId) => api.get(`/api/occupancy/${structu
 export const getOccSummary  = (structureId) => api.get(`/api/occupancy/${structureId}/summary`)
 
 // ── Sensors ─────────────────────────────────────────────────────────
-export const postBatch      = (payload)   => api.post('/api/sensors/batch', payload)
 export const getPosition    = (sessionId) => api.get(`/api/sensors/position/${sessionId}`)
 
 // ── ML (1D-CNN served by the backend via ONNX Runtime) ─────────────

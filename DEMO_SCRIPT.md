@@ -98,7 +98,7 @@
    > **Say:** "Now it flips to Walking — notice the probabilities shift. Stairs is a separate class; telling stairs from walking is exactly what a simple threshold can't do."
 4. **Stop and stand still ~8 seconds** → the **Vehicle appears parked** banner appears.
    > **Say:** "Sustained stillness — the system suggests I've parked."
-5. Point to the **Floor Map** and **Parking Bays**: "Dead reckoning moves the dot with steps and heading; green bays are free."
+5. Point to the **Floor Map** and **Parking Bays**: "Dead reckoning moves the dot 0.7 m per step along the heading; it drifts, so you can tap the map to correct it. Take the stairs and it switches floor by itself. Green bays are free."
 
 ### Demo Step 3: Park + Exit (30 sec)
 1. Tap a **free bay** (e.g. C1) → Parked page shows bay, zone, duration counting up.
@@ -108,7 +108,7 @@
 1. Laptop → `/admin` → **Sessions**:
    > **Say:** "Every session, with the CNN's latest activity per driver."
 2. **🤖 ML Model** tab:
-   > **Say:** "The model card: 94% weighted F1 on held-out recordings versus 80% for the Random Forest. The random-split number is crossed out on purpose — it leaks. Here's the confusion matrix; most remaining errors are stairs versus walking."
+   > **Say:** "The model card: 94% weighted F1 on held-out recordings versus 80% for the Random Forest, and 96% once predictions are smoothed over three windows, which is what you saw live. The random-split number is crossed out on purpose — it leaks. Here's the confusion matrix; most remaining errors are stairs versus walking."
 3. **🛰️ Positioning** tab, set **4×**:
    > **Say:** "This is the next layer, in simulation. White is the true walk, orange is dead reckoning alone — it drifts metres off. Blue is particle swarm optimisation: 80 particles matching magnetometer readings against a fingerprint map. It stays within about a metre."
    - Tap **Scatter swarm**: "Even if it loses track completely, the swarm relocks within a few seconds."

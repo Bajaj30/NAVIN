@@ -6,7 +6,7 @@ export default function SensorDisplay({ sensors }) {
     {
       title: '🧭 Orientation',
       items: [
-        { label: 'Compass', value: sensors.compass, unit: '°', color: 'text-navin-400' },
+        { label: sensors.headingSource === 'relative' ? 'Heading (rel)' : 'Compass', value: sensors.compass, unit: '°', color: 'text-navin-400' },
         { label: 'Tilt F/B', value: sensors.tilt_fb, unit: '°', color: 'text-purple-400' },
         { label: 'Tilt L/R', value: sensors.tilt_lr, unit: '°', color: 'text-cyan-400' },
       ]

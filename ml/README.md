@@ -33,10 +33,13 @@ The whole chain, including features and normalisation, is exported as **one ONNX
 | | Weighted F1 | Stairs | Stationary | Walking |
 |---|---|---|---|---|
 | **1D-CNN** (3 seeds) | **0.941 ± 0.005** | 0.92 | 0.98 | 0.95 |
+| 1D-CNN + 3-window smoothing *(as served)* | 0.960 ± 0.004 | 0.95 | 0.98 | 0.97 |
 | Random Forest (27 handcrafted features: mean/std/min/max/RMS per channel, zero-crossings, FFT dominant frequency) | 0.801 | 0.67 | 0.98 | 0.79 |
 | 1D-CNN, random window split *(leaky, for reference only)* | 0.972 | | | |
 
 The random split scores higher because overlapping windows from the same recording land on both sides. That gap is the leakage. The earlier pipeline reported 0.986 for both models this way.
+
+**Smoothing.** Live, the server averages each session's last 3 window probabilities before answering, so a single walking ↔ stairs flip is outvoted by its neighbours. `train_cnn.py` applies the same causal average to the out-of-session predictions. Windows that straddle an activity change are not in the evaluation set (label purity < 80%), so the live gain is smaller right at transitions, where smoothing also adds about a second of lag.
 
 The confusion matrix and training curve are in [`results/`](results/); full numbers are in `results/*.json` and `models/model_card.json`.
 

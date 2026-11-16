@@ -14,6 +14,12 @@ import { ActivityClassifier, ACTIVITY } from '../utils/activityClassifier'
 // (each prediction already covers the previous 2 s, so ≈ 8 s of stillness in total)
 const ML_PARK_AFTER_MS = 6000
 
+// Stairs → floor change. A staircase is counted once the CNN has said STAIRS for at least
+// STAIRS_MIN_WINDOWS (≈ 1 s each) and then stopped for STAIRS_END_MS — the pause keeps a
+// two-flight staircase with a landing in the middle from counting as two floor changes.
+const STAIRS_MIN_WINDOWS = 4
+const STAIRS_END_MS = 5000
+
 export default function Navigate() {
   const { sessionId: urlSessionId } = useParams()
   const navigate = useNavigate()
@@ -21,7 +27,7 @@ export default function Navigate() {
   const sessionId = urlSessionId || localStorage.getItem('navin_session_id')
   const structureId = localStorage.getItem('navin_structure_id') || 'struct_demo_001'
 
-  const { sensors, granted, requestPermission, latestRef } = useSensors(sessionId, true)
+  const { sensors, granted, requestPermission, latestRef, setStepsAllowed } = useSensors(true)
   const { bays, refresh } = useOccupancy(structureId)
   const ml = useMLClassifier(latestRef, sessionId, granted && !!sessionId)
 
@@ -29,11 +35,18 @@ export default function Navigate() {
   const [mlActivity, setMlActivity] = useState(null)
   const [selectedFloor, setSelectedFloor] = useState(0)
   const [showParkBanner, setShowParkBanner] = useState(false)
+  const [stairsNotice, setStairsNotice] = useState(null)   // { from, to } after an automatic switch, { ask: true } if ambiguous
   const [parking, setParking] = useState(false)
   const [error, setError] = useState(null)
 
   const classifierRef = useRef(new ActivityClassifier())
   const mlStationarySinceRef = useRef(null)
+  const stairsRef = useRef({ windows: 0, lastAt: 0 })
+  const floors = [...new Set(bays.map(b => b.floor))].sort((a, b) => a - b)
+  const floorsRef = useRef(floors)
+  floorsRef.current = floors
+  const selectedFloorRef = useRef(selectedFloor)
+  selectedFloorRef.current = selectedFloor
 
   // On-device heuristic — always running, used whenever the CNN isn't live
   useEffect(() => {
@@ -60,6 +73,35 @@ export default function Navigate() {
     }
   }, [ml.mode, ml.prediction])
 
+  // Sustained STAIRS, then off the stairs ⇒ the user is on another floor.
+  // A browser has no barometer, so the direction is unknown: with two floors it must be the
+  // other one (switch automatically, offer undo); with more, ask.
+  useEffect(() => {
+    const p = ml.prediction
+    const stairs = stairsRef.current
+    if (ml.mode !== 'ml' || !p) {
+      stairs.windows = 0
+      return
+    }
+    if (p.activity === 'STAIRS') {
+      stairs.windows += 1
+      stairs.lastAt = p.at
+    } else if (stairs.windows > 0 && p.at - stairs.lastAt >= STAIRS_END_MS) {
+      const climbed = stairs.windows >= STAIRS_MIN_WINDOWS
+      stairs.windows = 0
+      const all = floorsRef.current
+      if (!climbed || all.length < 2) return
+      if (all.length === 2) {
+        const current = selectedFloorRef.current
+        const other = all.find(f => f !== current) ?? current
+        setSelectedFloor(other)
+        setStairsNotice({ from: current, to: other })
+      } else {
+        setStairsNotice({ ask: true })
+      }
+    }
+  }, [ml.mode, ml.prediction])
+
   const usingML = ml.mode === 'ml' && mlActivity !== null
   const activity = usingML ? mlActivity : heuristicActivity
 
@@ -72,7 +114,11 @@ export default function Navigate() {
     prevActivityRef.current = activity
   }, [activity])
 
-  // Position is now handled by dead reckoning in FloorMap
+  // Only count steps while the CNN isn't saying "standing still" — keeps bumps and gestures
+  // from moving the map dot. (With the heuristic fallback, every detected step counts.)
+  useEffect(() => {
+    setStepsAllowed(!(usingML && (mlActivity === ACTIVITY.STATIONARY || mlActivity === ACTIVITY.PARKED)))
+  }, [usingML, mlActivity, setStepsAllowed])
 
   const handlePark = async (bay) => {
     setParking(true)
@@ -172,6 +218,43 @@ export default function Navigate() {
           </div>
         )}
 
+        {/* Stairs → floor change */}
+        {stairsNotice && (
+          <div className="glass-card p-4 border-purple-500/30 animate-slide-up">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🪜</span>
+              <div className="flex-1">
+                <p className="text-white font-bold text-sm">
+                  {stairsNotice.ask ? 'Stairs detected — which floor are you on?' : `Stairs detected — now showing Floor ${stairsNotice.to + 1}`}
+                </p>
+                {stairsNotice.ask ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {floors.map(f => (
+                      <button
+                        key={f}
+                        onClick={() => { setSelectedFloor(f); setStairsNotice(null) }}
+                        className="px-3 py-1 rounded-lg text-xs font-medium bg-white/10 text-white/80"
+                      >
+                        Floor {f + 1}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex gap-4 mt-1">
+                    <button
+                      onClick={() => { setSelectedFloor(stairsNotice.from); setStairsNotice(null) }}
+                      className="text-white/50 text-xs underline"
+                    >
+                      Undo — I&apos;m still on Floor {stairsNotice.from + 1}
+                    </button>
+                    <button onClick={() => setStairsNotice(null)} className="text-white/30 text-xs underline">OK</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Live CNN activity classification */}
         <ActivityAICard ml={ml} heuristicActivity={heuristicActivity} />
 
@@ -191,6 +274,7 @@ export default function Navigate() {
           sensors={sensors}
           structureId={structureId}
           floor={selectedFloor}
+          activity={activity}
         />
 
         {/* Occupancy grid */}
@@ -201,12 +285,12 @@ export default function Navigate() {
         />
 
         {/* Floor switcher (if we have multiple) */}
-        {[...new Set(bays.map(b => b.floor))].length > 1 && (
+        {floors.length > 1 && (
           <div className="flex justify-center gap-2">
-            {[...new Set(bays.map(b => b.floor))].sort().map(f => (
+            {floors.map(f => (
               <button
                 key={f}
-                onClick={() => setSelectedFloor(f)}
+                onClick={() => { setSelectedFloor(f); setStairsNotice(null) }}
                 className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
                   f === selectedFloor
                     ? 'bg-navin-600 text-white glow-blue'

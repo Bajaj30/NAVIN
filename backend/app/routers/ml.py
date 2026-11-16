@@ -29,7 +29,7 @@ def predict(payload: PredictPayload):
     if not np.isfinite(window).all():
         raise HTTPException(status_code=422, detail="Samples must be finite numbers")
 
-    result = ml_service.predict(window)
+    result = ml_service.predict(window, payload.session_id)
     if payload.session_id:
         ml_service.record(payload.session_id, result)
     return result

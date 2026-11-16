@@ -1,17 +1,27 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { postBatch } from '../services/api'
+import { StepDetector } from '../utils/stepDetector'
+import { headingFromEvent, smoothHeading } from '../utils/heading'
+
+const PENDING_STEP_MS = 2500   // steps seen while gated are credited if the gate opens this soon after
 
 /**
- * useSensors — collects orientation + accelerometer + gyroscope from phone.
- * 
- * Sources:
- *   DeviceMotionEvent → accelerometer (x,y,z) + gyroscope (rotationRate)
- *   DeviceOrientationEvent → compass heading + tilt angles
+ * useSensors — live motion + orientation from the phone.
+ *
+ *   DeviceMotionEvent       → accelerometer (incl. gravity) + gyroscope (rotationRate)
+ *   DeviceOrientationEvent  → heading (clockwise from north) + tilt angles
+ *
+ * Nothing is uploaded from here: the CNN gets its 10 Hz windows from useMLClassifier,
+ * which samples `latestRef`.
+ *
+ * Steps are only counted while `setStepsAllowed(true)` (the default). Navigate closes the gate
+ * while the CNN says the user is standing still, so bumps and gestures don't move the map dot.
  */
-export default function useSensors(sessionId, enabled = true) {
+export default function useSensors(enabled = true) {
   const [sensors, setSensors] = useState({
-    // Orientation (DeviceOrientationEvent)
-    compass: 0,      // alpha: compass heading 0-360°
+    // Orientation
+    compass: 0,      // heading, degrees clockwise from north (raw)
+    heading: 0,      // smoothed heading used for dead reckoning
+    headingSource: null,   // 'compass' (absolute) | 'relative' (gyro-only, arbitrary zero) | null
     tilt_fb: 0,      // beta:  tilt front/back -180 to 180°
     tilt_lr: 0,      // gamma: tilt left/right -90 to 90°
     // Acceleration (DeviceMotionEvent.accelerationIncludingGravity)
@@ -20,32 +30,34 @@ export default function useSensors(sessionId, enabled = true) {
     accel_z: 0,
     accel_mag: 0,    // sqrt(x²+y²+z²), ~9.8 when still
     // Gyroscope (DeviceMotionEvent.rotationRate) — angular velocity in deg/s
-    gyro_alpha: 0,   // yaw rate   (turning left/right) — KEY for turn detection
-    gyro_beta: 0,    // pitch rate (tilting forward/back)
-    gyro_gamma: 0,   // roll rate  (tilting left/right)
+    gyro_alpha: 0,
+    gyro_beta: 0,
+    gyro_gamma: 0,
     // Derived
     steps: 0,
-    heading: 0,      // smoothed compass heading for dead reckoning
     timestamp: Date.now(),
   })
   const [granted, setGranted] = useState(false)
   const [error, setError] = useState(null)
 
-  const batchRef = useRef([])
   const stepsRef = useRef(0)
-  const lastStepTimeRef = useRef(0)
+  const detectorRef = useRef(new StepDetector())
+  const stepsAllowedRef = useRef(true)
+  const pendingStepsRef = useRef([])
   const lastUpdateRef = useRef(0)
-  const headingRef = useRef(0)
+  const headingRef = useRef(null)
+  const hasAbsoluteRef = useRef(false)
   // Latest raw motion reading (unthrottled) — sampled at 10 Hz by useMLClassifier
   const latestRef = useRef(null)
 
-  // Debounced step detection — minimum 300ms between steps
-  const detectStep = useCallback((mag) => {
-    const now = Date.now()
-    if (mag > 11.5 && (now - lastStepTimeRef.current) > 300) {
-      stepsRef.current += 1
-      lastStepTimeRef.current = now
+  const setStepsAllowed = useCallback((allowed) => {
+    if (allowed && !stepsAllowedRef.current) {
+      // The classifier needs ~2 s to notice walking has started — don't lose those first steps
+      const cutoff = Date.now() - PENDING_STEP_MS
+      stepsRef.current += pendingStepsRef.current.filter(t => t >= cutoff).length
     }
+    pendingStepsRef.current = []
+    stepsAllowedRef.current = allowed
   }, [])
 
   const handleMotion = useCallback((event) => {
@@ -55,26 +67,19 @@ export default function useSensors(sessionId, enabled = true) {
     const accel_z = a.z ?? 0
     const accel_mag = Math.sqrt(accel_x ** 2 + accel_y ** 2 + accel_z ** 2)
 
-    // Gyroscope — rotation rate in deg/s
     const r = event.rotationRate || {}
-    const gyro_alpha = r.alpha ?? 0  // yaw   (turning)
-    const gyro_beta = r.beta ?? 0    // pitch (nodding)
-    const gyro_gamma = r.gamma ?? 0  // roll  (tilting)
+    const gyro_alpha = r.alpha ?? 0
+    const gyro_beta = r.beta ?? 0
+    const gyro_gamma = r.gamma ?? 0
 
-    detectStep(accel_mag)
-    latestRef.current = { accel_x, accel_y, accel_z, gyro_alpha, gyro_beta, gyro_gamma, t: Date.now() }
-
-    // Collect for batch (full speed)
-    batchRef.current.push({
-      accel_x, accel_y, accel_z, accel_mag,
-      gyro_alpha, gyro_beta, gyro_gamma,
-      steps: stepsRef.current,
-      heading: headingRef.current,
-      ts: Date.now(),
-    })
+    const now = Date.now()
+    if (detectorRef.current.update(accel_mag, now)) {
+      if (stepsAllowedRef.current) stepsRef.current += 1
+      else pendingStepsRef.current = [...pendingStepsRef.current.filter(t => now - t < PENDING_STEP_MS), now]
+    }
+    latestRef.current = { accel_x, accel_y, accel_z, gyro_alpha, gyro_beta, gyro_gamma, t: now }
 
     // Throttle UI updates to ~15fps
-    const now = Date.now()
     if (now - lastUpdateRef.current < 66) return
     lastUpdateRef.current = now
 
@@ -88,25 +93,26 @@ export default function useSensors(sessionId, enabled = true) {
       gyro_beta: +gyro_beta.toFixed(1),
       gyro_gamma: +gyro_gamma.toFixed(1),
       steps: stepsRef.current,
-      heading: headingRef.current,
       timestamp: now,
     }))
-  }, [detectStep])
+  }, [])
 
   const handleOrientation = useCallback((event) => {
-    const alpha = event.alpha ?? 0
-    const beta = event.beta ?? 0
-    const gamma = event.gamma ?? 0
+    const h = headingFromEvent(event)
+    if (!h) return
+    // Android fires both `deviceorientation` (relative) and `deviceorientationabsolute`.
+    // Once a real compass bearing has been seen, ignore the relative stream.
+    if (h.absolute) hasAbsoluteRef.current = true
+    else if (hasAbsoluteRef.current) return
 
-    // Smooth compass heading (exponential moving average)
-    headingRef.current = headingRef.current * 0.7 + alpha * 0.3
-
+    headingRef.current = smoothHeading(headingRef.current, h.heading)
     setSensors(prev => ({
       ...prev,
-      compass: +alpha.toFixed(1),
-      tilt_fb: +beta.toFixed(1),
-      tilt_lr: +gamma.toFixed(1),
+      compass: +h.heading.toFixed(1),
       heading: +headingRef.current.toFixed(1),
+      headingSource: h.absolute ? 'compass' : 'relative',
+      tilt_fb: +(event.beta ?? 0).toFixed(1),
+      tilt_lr: +(event.gamma ?? 0).toFixed(1),
     }))
   }, [])
 
@@ -135,19 +141,13 @@ export default function useSensors(sessionId, enabled = true) {
     if (!granted || !enabled) return
     window.addEventListener('devicemotion', handleMotion)
     window.addEventListener('deviceorientation', handleOrientation)
-    const batchInterval = setInterval(() => {
-      if (batchRef.current.length > 0 && sessionId) {
-        const samples = [...batchRef.current]
-        batchRef.current = []
-        postBatch({ session_id: sessionId, samples }).catch(() => {})
-      }
-    }, 2000)
+    window.addEventListener('deviceorientationabsolute', handleOrientation)
     return () => {
       window.removeEventListener('devicemotion', handleMotion)
       window.removeEventListener('deviceorientation', handleOrientation)
-      clearInterval(batchInterval)
+      window.removeEventListener('deviceorientationabsolute', handleOrientation)
     }
-  }, [granted, enabled, sessionId, handleMotion, handleOrientation])
+  }, [granted, enabled, handleMotion, handleOrientation])
 
   useEffect(() => {
     if (typeof DeviceMotionEvent === 'undefined') {
@@ -159,5 +159,5 @@ export default function useSensors(sessionId, enabled = true) {
     }
   }, [])
 
-  return { sensors, granted, requestPermission, error, latestRef }
+  return { sensors, granted, requestPermission, error, latestRef, setStepsAllowed }
 }

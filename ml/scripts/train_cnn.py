@@ -30,18 +30,23 @@ from sklearn.model_selection import train_test_split
 
 from navin_ml import (BACKEND_MODEL_DIR, CLASSES, FEATURE_NAMES, MODEL_DIR, PROCESSED_DIR, RATE_HZ,
                       RESULTS_DIR, WINDOW_SIZE, ActivityNetProbs, fit_cnn,
-                      leave_one_session_out, load_processed, predict_proba, summarize)
+                      leave_one_session_out, load_processed, predict_proba, smooth_causal, summarize)
 
 warnings.filterwarnings('ignore')
 
 EPOCHS = 40
 SEEDS = [0, 1, 2]
+SMOOTH_WINDOWS = 3      # keep in sync with backend/app/services/ml_service.py
 ONNX_NAME = 'activity_cnn.onnx'
 
 
 def loso(X, y, groups, seed):
-    fp = lambda Xtr, ytr, Xte: predict_proba(fit_cnn(Xtr, ytr, EPOCHS, seed)[0], Xte).argmax(1)
-    return leave_one_session_out(X, y, groups, fp)
+    """Leave-one-session-out → (N, classes) out-of-session probabilities."""
+    probs = np.empty((len(y), len(CLASSES)), np.float32)
+    for g in np.unique(groups):
+        test = groups == g
+        probs[test] = predict_proba(fit_cnn(X[~test], y[~test], EPOCHS, seed)[0], X[test])
+    return probs
 
 
 def export_onnx(model, path):
@@ -109,15 +114,28 @@ def main():
     print(f"  Windows: {X.shape}, sessions: {len(meta['sessions'])}")
 
     # 1. Honest evaluation
-    per_seed = []
+    per_seed, per_seed_smoothed = [], []
     for seed in SEEDS:
-        preds = loso(X, y, groups, seed)
+        probs = loso(X, y, groups, seed)
+        preds = probs.argmax(1)
         per_seed.append(summarize(y, preds))
-        print(f"  LOSO seed {seed}: weighted F1 {per_seed[-1]['weighted_f1']:.4f}")
+        per_seed_smoothed.append(summarize(y, smooth_causal(probs, groups, SMOOTH_WINDOWS).argmax(1)))
+        print(f"  LOSO seed {seed}: weighted F1 {per_seed[-1]['weighted_f1']:.4f}"
+              f"  |  smoothed over {SMOOTH_WINDOWS} windows (as served): {per_seed_smoothed[-1]['weighted_f1']:.4f}")
         if seed == SEEDS[0]:
             print(classification_report(y, preds, target_names=CLASSES, zero_division=0))
     wf1 = np.array([m['weighted_f1'] for m in per_seed])
     mf1 = np.array([m['macro_f1'] for m in per_seed])
+    swf1 = np.array([m['weighted_f1'] for m in per_seed_smoothed])
+    smoothed = {
+        'windows': SMOOTH_WINDOWS,
+        'weighted_f1_mean': round(float(swf1.mean()), 4), 'weighted_f1_std': round(float(swf1.std()), 4),
+        'per_class_f1': per_seed_smoothed[0]['per_class_f1'],
+        'confusion_matrix': per_seed_smoothed[0]['confusion_matrix'],
+        'note': 'mean of the last 3 windows\' probabilities within a recording, as the server does live; '
+                'windows that straddle an activity change are not in the evaluation set, so the live '
+                'gain is smaller right at transitions',
+    }
 
     # 2. Leaky random split — reported only to show the inflation
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
@@ -150,6 +168,7 @@ def main():
         'weighted_f1_mean': round(float(wf1.mean()), 4), 'weighted_f1_std': round(float(wf1.std()), 4),
         'macro_f1_mean': round(float(mf1.mean()), 4),
         'per_seed': per_seed,
+        'smoothed': smoothed,
         'random_split_weighted_f1': random_split['weighted_f1'],
         'total_params': params, 'final_train_loss': history, 'onnx': onnx_check,
     }
@@ -177,6 +196,7 @@ def main():
                 'macro_f1_mean': cnn_metrics['macro_f1_mean'],
                 'per_class_f1': per_seed[0]['per_class_f1'], 'confusion_matrix': per_seed[0]['confusion_matrix'],
             },
+            'cnn_smoothed': smoothed,
             'random_forest': None if baseline is None else {
                 'weighted_f1': baseline['weighted_f1'], 'macro_f1': baseline['macro_f1'],
                 'per_class_f1': baseline['per_class_f1'],
@@ -195,6 +215,7 @@ def main():
 
     print("\n" + "=" * 60)
     print(f"CNN weighted F1 (leave-one-session-out): {wf1.mean():.4f} ± {wf1.std():.4f}")
+    print(f"  + {SMOOTH_WINDOWS}-window smoothing (as served):       {swf1.mean():.4f} ± {swf1.std():.4f}")
     if baseline:
         print(f"RF  weighted F1 (leave-one-session-out): {baseline['weighted_f1']:.4f}")
     print(f"Random split (leaky, for reference):     {random_split['weighted_f1']:.4f}")

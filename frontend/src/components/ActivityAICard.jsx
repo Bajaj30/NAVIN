@@ -69,7 +69,7 @@ export default function ActivityAICard({ ml, heuristicActivity }) {
       )}
 
       <p className="mt-3 pt-2 border-t border-white/5 text-[10px] text-white/30 text-center">
-        1D-CNN · ONNX Runtime on the server · 2 s windows @ 10 Hz · falls back to on-device heuristic
+        1D-CNN · ONNX Runtime on the server · 2 s windows @ 10 Hz, averaged over the last 3 · falls back to on-device heuristic
       </p>
     </div>
   )

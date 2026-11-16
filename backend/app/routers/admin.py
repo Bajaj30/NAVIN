@@ -214,4 +214,5 @@ def get_stats(db: Session = Depends(get_db)):
         "parked": parked,
         "exited_today": exited_today,
         "batches_today": batches_today,
+        "predictions": ml_service.prediction_count(),  # CNN windows classified since boot
     }

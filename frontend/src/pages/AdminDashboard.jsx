@@ -91,7 +91,7 @@ export default function AdminDashboard() {
     { label: 'Active', value: stats.active || 0, color: 'text-navin-400', icon: '🟢' },
     { label: 'Parked', value: stats.parked || 0, color: 'text-amber-400', icon: '🅿️' },
     { label: 'Exited Today', value: stats.exited_today || 0, color: 'text-emerald-400', icon: '🚪' },
-    { label: 'Batches', value: stats.batches_today || 0, color: 'text-purple-400', icon: '📦' },
+    { label: 'CNN predictions', value: stats.predictions || 0, color: 'text-purple-400', icon: '🤖' },
   ]
 
   return (

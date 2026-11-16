@@ -267,6 +267,20 @@ def leave_one_session_out(X, y, groups, fit_predict):
     return preds
 
 
+def smooth_causal(probs, groups, k=3):
+    """Average each window's probabilities with the k-1 windows before it in the same session.
+
+    This is what the server does live (backend/app/services/ml_service.py, SMOOTH_WINDOWS).
+    Causal: only past windows are used. Windows are stored in recording order.
+    """
+    out = np.empty_like(probs)
+    for g in np.unique(groups):
+        idx = np.flatnonzero(groups == g)
+        for j, i in enumerate(idx):
+            out[i] = probs[idx[max(0, j - k + 1):j + 1]].mean(axis=0)
+    return out
+
+
 def summarize(y_true, y_pred):
     per_class = f1_score(y_true, y_pred, average=None, labels=range(len(CLASSES)), zero_division=0)
     return {
